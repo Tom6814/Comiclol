@@ -46,9 +46,9 @@ go build -o tsukimi .
 ### 命令行参数
 
 ```
--config string   配置文件路径（默认 ./config.json，不存在会自动生成）
--data   string   数据目录（默认 $HOME/.tsukimi，覆盖配置）
--addr   string   HTTP 监听地址（默认 :7878，覆盖配置）
+-config string   配置文件路径（默认 $TSUKIMI_CONFIG，或 $DATA_DIR/config.json，不存在自动生成）
+-data   string   数据目录（默认 $TSUKIMI_DATA_DIR 或 $HOME/.tsukimi）
+-addr   string   HTTP 监听地址（默认 :7878；Zeabur 等 PaaS 平台自动使用 $PORT）
 ```
 
 示例：
@@ -57,11 +57,28 @@ go build -o tsukimi .
 ./tsukimi -data /var/tsukimi -addr 0.0.0.0:8787
 ```
 
+### 部署到 Zeabur（原生 Go）
+
+仓库根目录已有 `go.mod` + `main.go`，Zeabur 会自动识别为 Go 项目并构建，无需 Dockerfile。
+
+在 Zeabur 控制台按以下步骤配置：
+
+1. **添加服务**：选择本仓库（GitHub 集成），Zeabur 自动构建。
+2. **持久化数据**：为服务添加一个 Volume，挂载到 `/data`。
+3. **环境变量**：
+   - `TSUKIMI_DATA_DIR=/data` —— 书库、封面、下载文件全部落在持久化卷上
+   - （可选）`TSUKIMI_VERIFY_TLS=1` —— 强制校验禁漫 CDN 证书（默认跳过，因为证书状态不稳）
+   - （可选）`TSUKIMI_CONFIG=/data/config.json` —— 显式指定配置文件位置
+4. **端口**：无需配置。程序会自动读取 Zeabur 注入的 `PORT` 环境变量，监听 `0.0.0.0:$PORT`。
+5. 绑定域名（免费 `.zeabur.app` 子域名即可），HTTPS 由 Zeabur 自动签发。
+
+> 首次启动会在 `/data` 生成 `config.json`；登录禁漫账号、下载参数等可在前端「设置」页配置，配置持久化在 Volume 上，重启不丢失。
+
 ---
 
 ## 配置
 
-首次运行会在工作目录生成 `config.json`：
+首次运行会在数据目录生成 `config.json`（默认 `$DATA_DIR/config.json`）：
 
 ```json
 {
@@ -116,7 +133,7 @@ $DATA_DIR/
     └── jmcomic_<id>.jpg
 ```
 
-`config.json` 与二进制本身放在启动时的工作目录，与数据目录分开。
+`config.json` 与数据放在同一目录（`$DATA_DIR/config.json`），敏感字段已纳入 `.gitignore`。
 
 ---
 

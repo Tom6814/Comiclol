@@ -10,6 +10,7 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -29,11 +30,28 @@ import (
 
 func main() {
 	var (
-		configPath = flag.String("config", "config.json", "配置文件路径")
-		dataDir    = flag.String("data", "", "数据目录（默认 $HOME/.tsukimi）")
-		addr       = flag.String("addr", "", "HTTP 监听地址（覆盖配置）")
+		configPath = flag.String("config", "", "配置文件路径（默认 $TSUKIMI_CONFIG，或 $DATA_DIR/config.json，不存在自动生成）")
+		dataDir    = flag.String("data", "", "数据目录（默认 $TSUKIMI_DATA_DIR 或 $HOME/.tsukimi）")
+		addr       = flag.String("addr", "", "HTTP 监听地址（默认 :7878；Zeabur 等 PaaS 平台自动使用 $PORT）")
 	)
 	flag.Parse()
+
+	// 数据目录优先级：-data > $TSUKIMI_DATA_DIR > 配置默认
+	// Zeabur 部署时把持久化 volume 挂到 /data 并设 TSUKIMI_DATA_DIR=/data。
+	if *dataDir == "" {
+		*dataDir = os.Getenv("TSUKIMI_DATA_DIR")
+	}
+	// 配置路径优先级：-config > $TSUKIMI_CONFIG > $DATA_DIR/config.json > ./config.json
+	if *configPath == "" {
+		*configPath = os.Getenv("TSUKIMI_CONFIG")
+	}
+	if *configPath == "" {
+		if *dataDir != "" {
+			*configPath = filepath.Join(*dataDir, "config.json")
+		} else {
+			*configPath = "config.json"
+		}
+	}
 
 	logger := plugin.NewLogger()
 	bus := plugin.NewBus(logger)
@@ -45,8 +63,11 @@ func main() {
 	if *dataDir != "" {
 		cfg.DataDir = *dataDir
 	}
+	// 监听地址优先级：-addr > $PORT（Zeabur 自动注入）> 配置
 	if *addr != "" {
 		cfg.Addr = *addr
+	} else if p := os.Getenv("PORT"); p != "" {
+		cfg.Addr = "0.0.0.0:" + p
 	}
 	logger.Infof("main", "数据目录：%s", cfg.DataDir)
 
