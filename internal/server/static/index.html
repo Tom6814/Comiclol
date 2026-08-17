@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tsukimi · 月見</title>
+<style>
+  /* === Morandi 调色板 ===
+     暖奶白基底 + 灰玫瑰强调 + 鼠尾草绿点缀。
+     严禁玻璃磨砂、严禁蓝紫渐变。一切饱和度刻意压低。 */
+  :root {
+    --bg:        #ece6dc;
+    --bg-soft:   #f3eee4;
+    --surface:   #f7f2e9;
+    --surface-2: #e6dfd2;
+    --ink:       #3b3833;
+    --ink-2:     #6e6962;
+    --ink-3:     #918a7e;
+    --line:      #d9d2c3;
+    --line-soft: #e3dccd;
+    --accent:    #a47463;
+    --accent-2:  #c2a097;
+    --sage:      #8a9681;
+    --plum:      #8d7a83;
+    --warn:      #b5855c;
+    --radius:    10px;
+    --radius-lg: 16px;
+    --shadow:    0 1px 2px rgba(60, 55, 48, 0.04), 0 6px 18px -8px rgba(60, 55, 48, 0.08);
+    --serif:     "Cormorant Garamond", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", Georgia, serif;
+    --sans:      -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --mono:      "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { color: var(--ink); }
+  button, input, select, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+  button { cursor: pointer; }
+
+  /* === 顶栏 === */
+  header.topbar {
+    background: var(--bg-soft);
+    border-bottom: 1px solid var(--line);
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    position: sticky; top: 0; z-index: 30;
+  }
+  .brand { font-family: var(--serif); font-size: 24px; font-weight: 600; letter-spacing: 1px; color: var(--ink); }
+  .brand small { font-family: var(--sans); font-size: 11px; color: var(--ink-3); margin-left: 6px; letter-spacing: 2px; }
+  nav.main { display: flex; gap: 4px; flex: 1; }
+  nav.main a {
+    padding: 7px 14px; border-radius: 999px; color: var(--ink-2); font-size: 14px;
+    transition: background 0.15s, color 0.15s;
+  }
+  nav.main a:hover { background: var(--surface-2); color: var(--ink); }
+  nav.main a.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+  .topbar .right { display: flex; align-items: center; gap: 14px; }
+  .session-pill { font-size: 12px; color: var(--ink-2); background: var(--surface); padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); }
+  .session-pill .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); margin-right: 6px; }
+  .session-pill.online .dot { background: var(--sage); }
+
+  /* === 主体 === */
+  main { max-width: 1240px; margin: 0 auto; padding: 28px; min-height: calc(100vh - 60px); }
+  .view { display: none; }
+  .view.active { display: block; }
+  .view-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 22px; gap: 16px; }
+  .view-header h1 { font-family: var(--serif); font-weight: 500; font-size: 30px; margin: 0; letter-spacing: 0.5px; }
+  .view-header .hint { color: var(--ink-3); font-size: 13px; }
+  .view-header .actions { display: flex; gap: 8px; }
+
+  /* === 按钮 === */
+  .btn {
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+    padding: 8px 16px; border-radius: 8px; font-size: 14px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .btn:hover { background: var(--surface-2); border-color: var(--ink-3); }
+  .btn.primary { background: var(--accent); color: #fdf8ef; border-color: var(--accent); }
+  .btn.primary:hover { background: #946757; }
+  .btn.subtle { background: transparent; border-color: transparent; color: var(--ink-2); padding: 6px 10px; }
+  .btn.subtle:hover { color: var(--ink); background: var(--surface-2); }
+  .btn.danger { color: var(--accent); }
+  .btn.danger:hover { background: rgba(164,116,99,0.08); }
+
+  /* === 输入 === */
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .field label { font-size: 12px; color: var(--ink-2); letter-spacing: 0.5px; }
+  .field input, .field select, .field textarea {
+    background: var(--surface); border: 1px solid var(--line); padding: 9px 12px; border-radius: 8px; color: var(--ink);
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--accent-2); background: var(--bg-soft); }
+
+  /* === 卡片网格 === */
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 20px;
+  }
+  .manga-card {
+    background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius-lg);
+    padding: 10px; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .manga-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); border-color: var(--line); }
+  .cover {
+    aspect-ratio: 3/4; border-radius: 8px; background: var(--surface-2);
+    background-size: cover; background-position: center; position: relative; overflow: hidden;
+  }
+  .cover.empty { display: flex; align-items: center; justify-content: center; color: var(--ink-3); font-size: 12px; }
+  .cover .badge {
+    position: absolute; top: 6px; right: 6px;
+    background: var(--sage); color: #fdf8ef; font-size: 10px;
+    padding: 3px 7px; border-radius: 4px; letter-spacing: 0.5px;
+  }
+  .manga-card .title { font-size: 14px; color: var(--ink); font-weight: 500; line-height: 1.35; max-height: 2.7em; overflow: hidden; }
+  .manga-card .meta { font-size: 12px; color: var(--ink-3); }
+
+  /* === 详情 === */
+  .detail { display: grid; grid-template-columns: 260px 1fr; gap: 32px; }
+  .detail .cover-big {
+    aspect-ratio: 3/4; border-radius: var(--radius-lg); background: var(--surface-2);
+    background-size: cover; background-position: center; box-shadow: var(--shadow);
+  }
+  .detail h1 { font-family: var(--serif); font-weight: 500; font-size: 32px; margin: 0 0 6px; letter-spacing: 0.3px; }
+  .detail .author { color: var(--accent); margin-bottom: 14px; }
+  .detail .info-row { display: flex; gap: 14px; flex-wrap: wrap; margin: 14px 0; color: var(--ink-2); font-size: 13px; }
+  .detail .info-row span { background: var(--surface); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line-soft); }
+  .detail .desc { color: var(--ink-2); font-size: 14px; line-height: 1.7; margin: 14px 0; }
+  .detail .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
+  .tag { background: var(--surface-2); color: var(--ink-2); padding: 3px 9px; border-radius: 4px; font-size: 12px; }
+  .chapter-list { margin-top: 18px; border-top: 1px solid var(--line-soft); }
+  .chapter-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 4px; border-bottom: 1px solid var(--line-soft);
+  }
+  .chapter-item .name { color: var(--ink); font-size: 14px; }
+  .chapter-item .pages { color: var(--ink-3); font-size: 12px; margin-left: 8px; }
+  .chapter-item .ctrls { display: flex; gap: 6px; }
+  .chapter-item .status { font-size: 11px; color: var(--sage); margin-right: 8px; }
+  .chapter-item .status.missing { color: var(--ink-3); }
+
+  /* === Reader === */
+  .reader-wrap { background: var(--bg); }
+  .reader-toolbar {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--bg-soft); border-bottom: 1px solid var(--line);
+    padding: 10px 28px; display: flex; align-items: center; gap: 14px;
+  }
+  .reader-toolbar .chap-name { font-family: var(--serif); font-size: 17px; flex: 1; }
+  .reader-pages { display: flex; flex-direction: column; align-items: center; padding: 24px 12px 60px; gap: 10px; }
+  .reader-pages img { max-width: 920px; width: 100%; border-radius: 4px; box-shadow: var(--shadow); background: var(--surface); }
+
+  /* === 下载 === */
+  .task-card {
+    background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius);
+    padding: 14px 16px; margin-bottom: 12px;
+  }
+  .task-card .row1 { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .task-card .title { font-weight: 500; }
+  .task-card .status { font-size: 12px; padding: 3px 9px; border-radius: 999px; }
+  .task-card .status.queued { background: var(--surface-2); color: var(--ink-2); }
+  .task-card .status.running { background: rgba(164,116,99,0.12); color: var(--accent); }
+  .task-card .status.done    { background: rgba(138,150,129,0.18); color: var(--sage); }
+  .task-card .status.failed  { background: rgba(181,133,92,0.18); color: var(--warn); }
+  .task-card .status.canceled{ background: var(--surface-2); color: var(--ink-3); }
+  .progress {
+    height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden;
+  }
+  .progress > span { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
+  .task-card .meta { display: flex; gap: 16px; margin-top: 8px; color: var(--ink-3); font-size: 12px; }
+
+  /* === Modal === */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(50, 45, 38, 0.32);
+    display: flex; align-items: center; justify-content: center; z-index: 100;
+    backdrop-filter: none; /* 严禁玻璃磨砂 */
+  }
+  .modal {
+    background: var(--surface); border-radius: var(--radius-lg); padding: 24px 28px;
+    width: min(420px, 92vw); box-shadow: var(--shadow); border: 1px solid var(--line);
+  }
+  .modal h2 { margin: 0 0 16px; font-family: var(--serif); font-weight: 500; font-size: 22px; }
+  .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+
+  /* === Settings === */
+  .settings-section {
+    background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius-lg);
+    padding: 22px 26px; margin-bottom: 18px;
+  }
+  .settings-section h3 { margin: 0 0 14px; font-family: var(--serif); font-weight: 500; font-size: 19px; }
+  .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+
+  /* === Empty === */
+  .empty { text-align: center; padding: 80px 20px; color: var(--ink-3); }
+  .empty .glyph { font-family: var(--serif); font-size: 60px; color: var(--line); margin-bottom: 12px; }
+  .empty .msg { font-size: 15px; }
+
+  /* === Toast === */
+  #toasts { position: fixed; bottom: 22px; right: 22px; z-index: 200; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    background: var(--ink); color: #fdf8ef; padding: 10px 16px; border-radius: 8px;
+    box-shadow: var(--shadow); font-size: 13px; animation: toast-in 0.2s ease;
+  }
+  .toast.err { background: var(--accent); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* === Pagination === */
+  .pagination { display: flex; justify-content: center; gap: 8px; margin: 24px 0; }
+  .pagination button { min-width: 36px; padding: 6px 10px; }
+
+  @media (max-width: 760px) {
+    header.topbar { padding: 10px 16px; gap: 12px; flex-wrap: wrap; }
+    nav.main { order: 3; width: 100%; overflow-x: auto; }
+    main { padding: 16px; }
+    .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .detail { grid-template-columns: 1fr; }
+    .detail .cover-big { max-width: 240px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">月見<small>TSUKIMI</small></div>
+  <nav class="main">
+    <a href="#/"        data-nav="library">书库</a>
+    <a href="#/favorites" data-nav="favorites">收藏</a>
+    <a href="#/downloads" data-nav="downloads">下载</a>
+    <a href="#/settings"  data-nav="settings">设置</a>
+  </nav>
+  <div class="right">
+    <span id="sessionPill" class="session-pill"><span class="dot"></span>未登录</span>
+  </div>
+</header>
+
+<main>
+  <!-- 书库 -->
+  <section id="view-library" class="view">
+    <div class="view-header">
+      <h1>书库</h1>
+      <div class="actions">
+        <button class="btn" id="btnSyncNow">立即同步收藏</button>
+        <button class="btn primary" id="btnAddById">按 ID 下载</button>
+      </div>
+    </div>
+    <div id="libraryGrid" class="grid"></div>
+  </section>
+
+  <!-- 详情 -->
+  <section id="view-detail" class="view">
+    <div class="view-header">
+      <h1><a href="#/">‹ 书库</a></h1>
+    </div>
+    <div id="detailBody"></div>
+  </section>
+
+  <!-- 收藏 -->
+  <section id="view-favorites" class="view">
+    <div class="view-header">
+      <h1>收藏</h1>
+      <div class="hint" id="favHint"></div>
+    </div>
+    <div id="favoritesBody"></div>
+  </section>
+
+  <!-- 下载 -->
+  <section id="view-downloads" class="view">
+    <div class="view-header">
+      <h1>下载</h1>
+      <button class="btn subtle" id="btnRefreshTasks">刷新</button>
+    </div>
+    <div id="downloadsList"></div>
+  </section>
+
+  <!-- 设置 -->
+  <section id="view-settings" class="view">
+    <div class="view-header">
+      <h1>设置</h1>
+    </div>
+    <div id="settingsBody"></div>
+  </section>
+
+  <!-- Reader 是独立全屏视图 -->
+  <section id="view-reader" class="view">
+    <div class="reader-toolbar" id="readerToolbar">
+      <button class="btn subtle" id="readerClose">‹ 返回</button>
+      <div class="chap-name" id="readerChapName"></div>
+      <button class="btn subtle" id="readerPrevChap">上一章</button>
+      <button class="btn subtle" id="readerNextChap">下一章</button>
+    </div>
+    <div class="reader-pages" id="readerPages"></div>
+  </section>
+</main>
+
+<div id="modalRoot"></div>
+<div id="toasts"></div>
+
+<script>
+// ============================================================
+//  tsukimi 前端：单文件 vanilla JS。
+//  路由用 location.hash，状态用闭包，渲染直接 innerHTML。
+//  个人项目不需要框架，能少 200KB 就少 200KB。
+// ============================================================
+
+const api = {
+  get:    (p)    => fetch(p).then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP "+r.status))),
+  post:   (p, b) => fetch(p, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(b||{})}).then(handleJSON),
+  put:    (p, b) => fetch(p, {method:"PUT",  headers:{"Content-Type":"application/json"}, body: JSON.stringify(b||{})}).then(handleJSON),
+  del:    (p)    => fetch(p, {method:"DELETE"}).then(handleJSON),
+};
+function handleJSON(r) {
+  if (!r.ok) return r.json().then(j => Promise.reject(new Error(j.error || ("HTTP "+r.status)))).catch(() => Promise.reject(new Error("HTTP "+r.status)));
+  return r.json();
+}
+function toast(msg, isErr) {
+  const el = document.createElement("div");
+  el.className = "toast" + (isErr ? " err" : "");
+  el.textContent = msg;
+  document.getElementById("toasts").appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+const state = {
+  library: [],
+  current: null,        // 当前详情 manga
+  favoritesPage: 1,
+  favorites: null,
+  tasks: [],
+  session: [],
+  cfg: null,
+  reader: { src:"", id:"", ch:"", pages: [], chapName:"", chapters: [] },
+};
+
+// ===== Routing =====
+function route() {
+  const hash = location.hash.replace(/^#/, "") || "/";
+  const parts = hash.split("/").filter(Boolean);  // e.g. ["manga", "jmcomic", "123"]
+  hideAllViews();
+  document.querySelectorAll("nav.main a").forEach(a => a.classList.remove("active"));
+
+  if (parts.length === 0)               { showView("library");   markNav("library");   loadLibrary(); }
+  else if (parts[0] === "manga")        { showView("detail");                            loadDetail(parts[1], parts[2]); }
+  else if (parts[0] === "read")         { showView("reader");                            loadReader(parts[1], parts[2], parts[3]); }
+  else if (parts[0] === "favorites")    { showView("favorites");  markNav("favorites"); loadFavorites(); }
+  else if (parts[0] === "downloads")    { showView("downloads");  markNav("downloads"); loadTasks(); }
+  else if (parts[0] === "settings")     { showView("settings");   markNav("settings");  loadSettings(); }
+  else                                  { showView("library");   markNav("library");   loadLibrary(); }
+}
+function showView(id)  { document.getElementById("view-"+id).classList.add("active"); document.body.style.background = id === "reader" ? "var(--bg-soft)" : "var(--bg)"; }
+function hideAllViews(){ document.querySelectorAll(".view").forEach(v => v.classList.remove("active")); }
+function markNav(name) { const a = document.querySelector('nav.main a[data-nav="'+name+'"]'); if (a) a.classList.add("active"); }
+window.addEventListener("hashchange", route);
+
+// ===== Session pill =====
+async function refreshSession() {
+  try {
+    const list = await api.get("/api/session");
+    state.session = list;
+    const pill = document.getElementById("sessionPill");
+    if (list.length === 0) {
+      pill.className = "session-pill";
+      pill.innerHTML = '<span class="dot"></span>未登录';
+    } else {
+      pill.className = "session-pill online";
+      pill.innerHTML = '<span class="dot"></span>' + list.map(s => s.username || s.source_id).join(", ");
+    }
+  } catch (e) { /* ignore */ }
+}
+
+// ===== Library =====
+async function loadLibrary() {
+  try {
+    const list = await api.get("/api/library");
+    state.library = list;
+    renderLibrary();
+  } catch (e) { toast("加载书库失败: " + e.message, true); }
+}
+function renderLibrary() {
+  const root = document.getElementById("libraryGrid");
+  if (state.library.length === 0) {
+    root.innerHTML = '<div class="empty" style="grid-column: 1 / -1;"><div class="glyph">月</div><div class="msg">书库还没有作品。<br>去「收藏」同步或用「按 ID 下载」开始。</div></div>';
+    return;
+  }
+  root.innerHTML = state.library.map(m => `
+    <div class="manga-card" onclick="location.hash='#/manga/${m.source_id}/${m.id}'">
+      <div class="cover ${m.cover_url ? "" : "empty"}" style="${m.cover_url ? `background-image:url(${m.cover_url})` : ""}">
+        ${m.downloaded ? '<span class="badge">已下载</span>' : ""}
+      </div>
+      <div class="title">${escapeHtml(m.title)}</div>
+      <div class="meta">${m.author || "—"} · ${m.chapters} 章</div>
+    </div>
+  `).join("");
+}
+
+// ===== Detail =====
+async function loadDetail(src, id) {
+  try {
+    const m = await api.get(`/api/library/${src}/${id}`);
+    state.current = m;
+    renderDetail();
+  } catch (e) { toast("加载详情失败: " + e.message, true); }
+}
+function renderDetail() {
+  const m = state.current;
+  const root = document.getElementById("detailBody");
+  const coverURL = `/api/library/${m.source_id}/${m.id}/cover`;
+  root.innerHTML = `
+    <div class="detail">
+      <div class="cover-big" style="background-image:url(${coverURL})"></div>
+      <div>
+        <h1>${escapeHtml(m.title)}</h1>
+        <div class="author">${escapeHtml(m.author || "佚名")}</div>
+        <div class="info-row">
+          ${m.page_count ? `<span>共 ${m.page_count} 页</span>` : ""}
+          ${m.chapters?.length ? `<span>${m.chapters.length} 章</span>` : ""}
+          ${m.pub_date ? `<span>${m.pub_date}</span>` : ""}
+          ${m.downloaded ? `<span style="color:var(--sage)">已下载</span>` : ""}
+        </div>
+        ${m.tags?.length ? `<div class="tags">${m.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join("")}</div>` : ""}
+        ${m.description ? `<div class="desc">${escapeHtml(m.description).replace(/\n/g,"<br>")}</div>` : ""}
+        <div style="margin: 18px 0;">
+          <button class="btn primary" onclick="downloadAll()">下载全部</button>
+          ${m.downloaded ? `<button class="btn danger" onclick="removeManga(true)" style="margin-left:8px;">删除文件</button>` : ""}
+          <button class="btn subtle"   onclick="removeManga(false)" style="margin-left:8px;">移出书库</button>
+        </div>
+        <div class="chapter-list" id="chapterList">
+          ${(m.chapters||[]).map(c => `
+            <div class="chapter-item" data-chap="${c.id}">
+              <div>
+                <span class="name">${escapeHtml(c.title || ("第 "+c.index+" 章"))}</span>
+                <span class="pages">${c.page_count}P</span>
+              </div>
+              <div style="display:flex; align-items:center;">
+                <span class="status missing" id="chap-status-${c.id}">未下载</span>
+                <div class="ctrls">
+                  <button class="btn subtle" onclick="downloadChapter('${c.id}')">下载</button>
+                  <button class="btn subtle" onclick="readChapter('${c.id}')">阅读</button>
+                </div>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+  // 检查每章是否已下载
+  (m.chapters||[]).forEach(async c => {
+    try {
+      const r = await fetch(`/api/library/${m.source_id}/${m.id}/${c.id}/pages`);
+      if (r.ok) {
+        const j = await r.json();
+        if (j.count > 0) {
+          const el = document.getElementById("chap-status-" + c.id);
+          if (el) { el.className = "status"; el.textContent = `本地 ${j.count}P`; }
+        }
+      }
+    } catch (e) {}
+  });
+}
+async function downloadAll()      { await submitDownload(state.current.source_id, state.current.id, state.current.title, null); }
+async function downloadChapter(id){ await submitDownload(state.current.source_id, state.current.id, state.current.title, [id]); }
+async function submitDownload(src, id, title, chapters) {
+  try {
+    const r = await api.post("/api/downloads", { source: src, manga_id: id, title: title, chapter_ids: chapters });
+    toast("已加入下载队列: " + r.task_id);
+    setTimeout(loadTasks, 200);
+  } catch (e) { toast("提交下载失败: " + e.message, true); }
+}
+async function removeManga(deleteFiles) {
+  if (!confirm(deleteFiles ? "确认删除文件和元数据？" : "确认从书库移除（保留文件）？")) return;
+  try {
+    await api.del(`/api/library/${state.current.source_id}/${state.current.id}?files=${deleteFiles?"1":"0"}`);
+    toast("已删除");
+    location.hash = "#/";
+  } catch (e) { toast("删除失败: " + e.message, true); }
+}
+
+// ===== Reader =====
+async function loadReader(src, id, ch) {
+  state.reader = { src, id, ch, pages: [], chapName: "", chapters: state.current?.chapters || [] };
+  document.getElementById("readerChapName").textContent = "加载中…";
+  document.getElementById("readerPages").innerHTML = "";
+  try {
+    const m = state.current || await api.get(`/api/library/${src}/${id}`);
+    if (!state.current) state.current = m;
+    state.reader.chapters = m.chapters || [];
+    const r = await api.get(`/api/library/${src}/${id}/${ch}/pages`);
+    state.reader.pages = r.pages || [];
+    const chap = (m.chapters||[]).find(c => c.id == ch);
+    state.reader.chapName = chap?.title || ("第 "+chap?.index+" 章") || ch;
+    document.getElementById("readerChapName").textContent = state.reader.chapName;
+    renderReaderPages();
+  } catch (e) {
+    document.getElementById("readerPages").innerHTML = `<div class="empty"><div class="glyph">月</div><div class="msg">章节尚未下载：${e.message}<br><button class="btn" onclick="downloadChapter('${ch}')">下载本章</button></div></div>`;
+  }
+}
+function renderReaderPages() {
+  const root = document.getElementById("readerPages");
+  if (state.reader.pages.length === 0) {
+    root.innerHTML = `<div class="empty"><div class="glyph">月</div><div class="msg">空章节</div></div>`;
+    return;
+  }
+  // 用 IntersectionObserver 做懒加载
+  root.innerHTML = state.reader.pages.map((p, i) =>
+    `<img data-src="${p}" data-idx="${i}" alt="page ${i+1}" style="min-height: 200px;">`
+  ).join("");
+  lazyImages();
+}
+function lazyImages() {
+  const imgs = document.querySelectorAll("#readerPages img[data-src]");
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        const img = e.target;
+        img.src = img.dataset.src;
+        img.removeAttribute("data-src");
+        io.unobserve(img);
+      }
+    });
+  }, { rootMargin: "300px" });
+  imgs.forEach(img => io.observe(img));
+}
+document.getElementById("readerClose").onclick  = () => history.back();
+document.getElementById("readerPrevChap").onclick = () => navigateChapter(-1);
+document.getElementById("readerNextChap").onclick = () => navigateChapter(1);
+function navigateChapter(delta) {
+  const chaps = state.reader.chapters;
+  if (!chaps || chaps.length === 0) return;
+  const idx = chaps.findIndex(c => c.id == state.reader.ch);
+  if (idx < 0) return;
+  const next = chaps[idx + delta];
+  if (!next) { toast(delta > 0 ? "已是最后一章" : "已是第一章"); return; }
+  location.hash = `#/read/${state.reader.src}/${state.reader.id}/${next.id}`;
+}
+async function readChapter(ch) {
+  // 先检查是否已下载
+  try {
+    const r = await fetch(`/api/library/${state.current.source_id}/${state.current.id}/${ch}/pages`);
+    if (r.ok) {
+      const j = await r.json();
+      if (j.count > 0) { location.hash = `#/read/${state.current.source_id}/${state.current.id}/${ch}`; return; }
+    }
+  } catch (e) {}
+  if (confirm("章节尚未下载，是否现在下载？")) { await downloadChapter(ch); }
+}
+
+// ===== Favorites =====
+async function loadFavorites() {
+  const hint = document.getElementById("favHint");
+  hint.textContent = "加载中…";
+  try {
+    const fp = await api.get(`/api/favorites?source=jmcomic&page=${state.favoritesPage}`);
+    state.favorites = fp;
+    renderFavorites();
+  } catch (e) {
+    document.getElementById("favoritesBody").innerHTML = `<div class="empty"><div class="glyph">月</div><div class="msg">${e.message}<br><button class="btn primary" onclick="openLoginModal()">登录禁漫</button></div></div>`;
+    hint.textContent = "";
+  }
+}
+function renderFavorites() {
+  const fp = state.favorites;
+  if (!fp) return;
+  const hint = document.getElementById("favHint");
+  hint.textContent = `第 ${fp.page} / ${fp.pages} 页 · 共 ${fp.total}`;
+  const root = document.getElementById("favoritesBody");
+  root.innerHTML = `
+    <div class="grid">
+      ${(fp.items||[]).map(it => `
+        <div class="manga-card">
+          <div class="cover ${it.cover_url?"":"empty"}" style="${it.cover_url?`background-image:url('${it.cover_url}')`:''}"></div>
+          <div class="title">${escapeHtml(it.title)}</div>
+          <div class="meta">${escapeHtml(it.author||"—")}</div>
+          <div style="display:flex; gap:6px; margin-top:4px;">
+            <button class="btn subtle" style="flex:1;" onclick="favDownload('${it.source_id}','${it.manga_id}',${JSON.stringify(it.title).replace(/"/g,'&quot;')})">下载</button>
+            <button class="btn subtle" onclick="location.hash='#/manga/${it.source_id}/${it.manga_id}'">详情</button>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+    <div class="pagination">
+      <button class="btn" ${fp.page<=1?"disabled":""} onclick="favGoto(${fp.page-1})">‹</button>
+      <span style="padding:6px 12px; color:var(--ink-2);">${fp.page} / ${fp.pages}</span>
+      <button class="btn" ${fp.page>=fp.pages?"disabled":""} onclick="favGoto(${fp.page+1})">›</button>
+    </div>
+  `;
+}
+function favGoto(p) { state.favoritesPage = p; loadFavorites(); }
+async function favDownload(src, id, title) {
+  try {
+    await api.post("/api/downloads", { source: src, manga_id: id, title: title });
+    toast("已加入下载: " + title);
+  } catch (e) { toast("失败: " + e.message, true); }
+}
+
+// ===== Downloads =====
+async function loadTasks() {
+  try {
+    const list = await api.get("/api/downloads");
+    state.tasks = list;
+    renderTasks();
+  } catch (e) { toast("加载任务失败: " + e.message, true); }
+}
+function renderTasks() {
+  const root = document.getElementById("downloadsList");
+  if (state.tasks.length === 0) {
+    root.innerHTML = `<div class="empty"><div class="glyph">月</div><div class="msg">暂无下载任务</div></div>`;
+    return;
+  }
+  root.innerHTML = state.tasks.map(t => {
+    const pct = Math.max(0, Math.min(100, Math.round((t.progress||0)*100)));
+    return `
+      <div class="task-card">
+        <div class="row1">
+          <div class="title">${escapeHtml(t.title || t.manga_id)} <span style="color:var(--ink-3); font-size:12px; margin-left:6px;">${t.origin==="sync"?"· 来自同步":""}</span></div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="status ${t.status}">${statusLabel(t.status)}</span>
+            <button class="btn subtle" onclick="cancelTask('${t.id}')">取消</button>
+            <button class="btn subtle" onclick="removeTask('${t.id}')">删除</button>
+          </div>
+        </div>
+        <div class="progress"><span style="width:${pct}%"></span></div>
+        <div class="meta">
+          <span>${t.done}/${t.total} 张</span>
+          <span>${pct}%</span>
+          ${t.error ? `<span style="color:var(--warn)">${escapeHtml(t.error)}</span>` : ""}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+function statusLabel(s) {
+  return { queued:"排队", running:"进行中", done:"完成", failed:"失败", canceled:"已取消" }[s] || s;
+}
+async function cancelTask(id) { try { await api.post(`/api/downloads/${id}/cancel`); loadTasks(); } catch(e){ toast(e.message, true); } }
+async function removeTask(id) { try { await api.del(`/api/downloads/${id}`);   loadTasks(); } catch(e){ toast(e.message, true); } }
+
+// ===== Settings =====
+async function loadSettings() {
+  try {
+    const cfg = await api.get("/api/config");
+    state.cfg = cfg;
+    renderSettings();
+  } catch (e) { toast("加载设置失败: " + e.message, true); }
+}
+function renderSettings() {
+  const c = state.cfg;
+  const root = document.getElementById("settingsBody");
+  root.innerHTML = `
+    <div class="settings-section">
+      <h3>禁漫账号</h3>
+      <p style="color:var(--ink-2); margin:0 0 14px; font-size:13px;">登录后才能拉取收藏；未登录也可通过 ID 直链下载公开作品。</p>
+      <div class="settings-grid">
+        <div class="field"><label>用户名</label><input id="jmUser" value="${c.jm?.username||""}" placeholder="用户名 / 邮箱"></div>
+        <div class="field"><label>密码</label><input id="jmPass" type="password" value="${c.jm?.password||""}" placeholder="密码"></div>
+      </div>
+      <div class="actions"><button class="btn primary" onclick="saveAndLogin()">保存并登录</button></div>
+    </div>
+
+    <div class="settings-section">
+      <h3>下载</h3>
+      <div class="settings-grid">
+        <div class="field"><label>章节并发</label><input id="cfgChapterJobs" type="number" min="1" max="8" value="${c.chapter_jobs}"></div>
+        <div class="field"><label>图片质量 (1-100)</label><input id="cfgImageQuality" type="number" min="1" max="100" value="${c.image_quality}"></div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>收藏自动同步</h3>
+      <div class="settings-grid">
+        <div class="field"><label>启用</label>
+          <select id="cfgSyncEnabled">
+            <option value="false" ${!c.sync_enabled?"selected":""}>关闭</option>
+            <option value="true"  ${c.sync_enabled?"selected":""}>开启</option>
+          </select>
+        </div>
+        <div class="field"><label>间隔（秒）</label><input id="cfgSyncInterval" type="number" min="60" value="${c.sync_interval}"></div>
+      </div>
+      <p style="color:var(--ink-3); font-size:12px; margin:6px 0 0;">改动需重启 tsukimi 进程才会生效。</p>
+    </div>
+
+    <div class="actions" style="margin-top:14px;">
+      <button class="btn primary" onclick="saveSettings()">保存设置</button>
+    </div>
+  `;
+}
+async function saveAndLogin() {
+  const u = document.getElementById("jmUser").value.trim();
+  const p = document.getElementById("jmPass").value;
+  if (!u || !p) { toast("请输入用户名和密码", true); return; }
+  try {
+    await api.put("/api/config", { jm: { username: u, password: p } });
+    const r = await api.post("/api/login", { source: "jmcomic", username: u, password: p });
+    toast("登录成功：" + r.username);
+    refreshSession();
+  } catch (e) { toast("登录失败: " + e.message, true); }
+}
+async function saveSettings() {
+  const patch = {
+    chapter_jobs:  +document.getElementById("cfgChapterJobs").value,
+    image_quality: +document.getElementById("cfgImageQuality").value,
+    sync_enabled:  document.getElementById("cfgSyncEnabled").value === "true",
+    sync_interval: +document.getElementById("cfgSyncInterval").value,
+  };
+  try {
+    await api.put("/api/config", patch);
+    toast("已保存");
+  } catch (e) { toast(e.message, true); }
+}
+
+// ===== Modal: login =====
+function openLoginModal() {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <h2>登录禁漫</h2>
+        <div class="field"><label>用户名</label><input id="mlUser"></div>
+        <div class="field"><label>密码</label><input id="mlPass" type="password"></div>
+        <div class="actions">
+          <button class="btn" onclick="closeModal()">取消</button>
+          <button class="btn primary" onclick="modalLogin()">登录</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function closeModal() { document.getElementById("modalRoot").innerHTML = ""; }
+async function modalLogin() {
+  const u = document.getElementById("mlUser").value.trim();
+  const p = document.getElementById("mlPass").value;
+  try {
+    await api.post("/api/login", { source:"jmcomic", username:u, password:p });
+    toast("登录成功");
+    closeModal();
+    refreshSession();
+    loadFavorites();
+  } catch(e) { toast(e.message, true); }
+}
+
+// ===== Modal: add by ID =====
+function openAddByIdModal() {
+  const root = document.getElementById("modalRoot");
+  root.innerHTML = `
+    <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <h2>按 ID 下载</h2>
+        <div class="field"><label>禁漫 album ID</label><input id="mlMangaId" placeholder="例如 123456"></div>
+        <p style="color:var(--ink-3); font-size:12px;">将拉取该作品元数据与全部章节图片到本地。</p>
+        <div class="actions">
+          <button class="btn" onclick="closeModal()">取消</button>
+          <button class="btn primary" onclick="modalAdd()">下载</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+async function modalAdd() {
+  const id = document.getElementById("mlMangaId").value.trim();
+  if (!id) return;
+  try {
+    await api.post("/api/downloads", { source:"jmcomic", manga_id:id, title:"" });
+    toast("已加入下载队列");
+    closeModal();
+    setTimeout(loadTasks, 200);
+  } catch(e) { toast(e.message, true); }
+}
+
+document.getElementById("btnAddById").onclick  = openAddByIdModal;
+document.getElementById("btnSyncNow").onclick  = async () => {
+  try { await api.post("/api/favorites/sync"); toast("已触发同步"); }
+  catch(e){ toast("同步失败: " + e.message, true); }
+};
+document.getElementById("btnRefreshTasks").onclick = loadTasks;
+
+// ===== SSE: live updates =====
+function openSSE() {
+  const es = new EventSource("/api/events");
+  es.addEventListener("download.progress", e => {
+    try {
+      const p = JSON.parse(e.data);
+      const t = state.tasks.find(x => x.id === p.payload.task_id);
+      if (t) { t.progress = p.payload.progress || t.progress; t.done = p.payload.done || t.done; t.total = p.payload.total || t.total; t.status = "running"; renderTasks(); }
+    } catch(_) {}
+  });
+  es.addEventListener("download.complete", e => { setTimeout(loadTasks, 300); });
+  es.addEventListener("download.failed",   e => { setTimeout(loadTasks, 300); });
+  es.addEventListener("download.queued",   e => { setTimeout(loadTasks, 300); });
+  es.addEventListener("sync.new.manga",    e => { toast("同步发现新收藏"); });
+}
+
+// ===== utils =====
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+// ===== boot =====
+refreshSession();
+openSSE();
+route();
+// 周期性刷新会话状态
+setInterval(refreshSession, 30000);
+</script>
+</body>
+</html>

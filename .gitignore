@@ -1,0 +1,30 @@
+# 编译产物
+/tsukimi
+/tsukimi-bin
+*.exe
+*.test
+*.out
+/bin/
+/dist/
+
+# 运行时生成的配置与数据（含凭据，禁止入库）
+/config.json
+/data/
+/library/
+/covers/
+/cache/
+/.tsukimi/
+
+# 临时/测试残留
+*.tmp
+*.part
+/tmp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# 日志
+*.log
