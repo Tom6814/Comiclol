@@ -64,6 +64,9 @@ func main() {
 	// APP API 实现有自己专属的域名池（cdnhjk.net 等），由 newAPIClient 内置，
 	// 所以这里 APIDomains 留空，让它走内置默认值。
 	srcReg := source.NewRegistry()
+	// InsecureTLS：禁漫 CDN 证书状态不稳（历史上有过过期 / 自签），
+	// 默认开启跳过校验；用户介意可设 TSUKIMI_VERIFY_TLS=1 强制校验。
+	insecureTLS := os.Getenv("TSUKIMI_VERIFY_TLS") != "1"
 	jm, err := jmcomic.New(jmcomic.Options{
 		Impl:        readImpl(cfg),
 		APIDomains:  nil,
@@ -73,6 +76,7 @@ func main() {
 		Username:    cfg.JM.Username,
 		Password:    cfg.JM.Password,
 		Cookies:     parseCookie(cfg.JM.AVSCookie),
+		InsecureTLS: insecureTLS,
 	})
 	must(logger, "init jmcomic", err)
 	if err := srcReg.Register(jm); err != nil {

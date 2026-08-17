@@ -3,6 +3,7 @@ package jmcomic
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,18 +55,20 @@ type apiClientConfig struct {
 	ImageHosts  []string
 	Retry       int
 	Cookies     map[string]string
+	InsecureTLS bool
 }
 
 // apiClient 是 APP 移动端 API 实现。
 type apiClient struct {
-	http      *http.Client
-	domains   []string
-	imgHosts  []string
-	retry     int
+	http     *http.Client
+	domains  []string
+	imgHosts []string
+	retry    int
 
-	mu        sync.RWMutex
-	cookies   map[string]string
-	imgIdx    uint32
+	mu         sync.RWMutex
+	cookies    map[string]string
+	imgIdx     uint32
+	cookieOnce sync.Once
 
 	// 进程级固定 ts/token（对齐 FLAG_USE_FIX_TIMESTAMP）
 }
@@ -79,13 +82,24 @@ func newAPIClient(cfg apiClientConfig) (*apiClient, error) {
 	if len(imgHosts) == 0 {
 		imgHosts = defaultImageDomains
 	}
-	c := &apiClient{
-		http: &http.Client{
-			Timeout: 30 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse // 不自动跟跳
-			},
+	// 关键：必须用 http.DefaultTransport.Clone() 作为基础，而不是 &http.Transport{}。
+	// 零值 Transport 缺失 DialContext/TLSHandshakeTimeout/ExpectContinueTimeout 等
+	// 默认设置，在某些网络环境下会卡死在拨号阶段。
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 16
+	transport.IdleConnTimeout = 60 * time.Second
+	if cfg.InsecureTLS {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	httpClient := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse // 不自动跟跳
 		},
+	}
+	c := &apiClient{
+		http:     httpClient,
 		domains:  domains,
 		imgHosts: imgHosts,
 		retry:    cfg.Retry,
@@ -99,11 +113,16 @@ func newAPIClient(cfg apiClientConfig) (*apiClient, error) {
 	if c.retry <= 0 {
 		c.retry = 5
 	}
-	// 初始化时尝试拉一个占位 cookie（APP 要求必须带 cookie，否则会被重定向到样本本子）
-	go func() {
-		_ = c.ensureCookies(context.Background())
-	}()
+	// ensureCookies 改为惰性触发，避免启动期后台 goroutine 抢占连接。
+	// 第一次 requestJSON 时会按需调用一次（见 ensureCookiesOnce）。
 	return c, nil
+}
+
+// ensureCookiesOnce 用 sync.Once 保证 ensureCookies 只在首次请求时同步执行一次。
+func (c *apiClient) ensureCookiesOnce(ctx context.Context) {
+	c.cookieOnce.Do(func() {
+		_ = c.ensureCookies(ctx)
+	})
 }
 
 func (c *apiClient) ImplKey() string { return "api" }
@@ -143,11 +162,18 @@ func (c *apiClient) ensureCookies(ctx context.Context) error {
 	if has {
 		return nil
 	}
-	// 调 /setting 触发服务端下发 cookie
+	// 调 /setting 触发服务端下发 cookie。
+	// 注意：这里直接走 doRequest 而非 requestJSON，避免 requestJSON 开头的
+	// ensureCookiesOnce 与 sync.Once 在同一 goroutine 内重入死锁。
 	ts, token, tokenParam := fixTokenTriple()
-	_, _, err := c.requestJSON(ctx, "GET", apiPathSetting, nil, ts, token, tokenParam, APPTokenSecret, nil)
+	resp, err := c.doRequest(ctx, "GET", apiPathSetting, nil, ts, token, tokenParam, false, nil)
 	if err != nil {
 		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("APP API %s HTTP %d", apiPathSetting, resp.StatusCode)
 	}
 	c.mu.Lock()
 	if c.cookies["AVS"] == "" {
@@ -162,6 +188,8 @@ func (c *apiClient) ensureCookies(ctx context.Context) error {
 // extraHeaders 用于附加方法专属头（如登录需要的 Content-Type）。
 // 返回 (解密后的 JSON 业务字段原始字节, 解密后的整段文本, err)。
 func (c *apiClient) requestJSON(ctx context.Context, method, path string, body io.Reader, ts, token, tokenParam, secret string, extraHeaders map[string]string) ([]byte, string, error) {
+	// 首次请求前同步初始化 cookie（惰性，避免启动期后台 goroutine 抢占连接）。
+	c.ensureCookiesOnce(ctx)
 	resp, err := c.doRequest(ctx, method, path, body, ts, token, tokenParam, false, extraHeaders)
 	if err != nil {
 		return nil, "", err

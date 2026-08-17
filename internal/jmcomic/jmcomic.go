@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"tsukimi/internal/domain"
@@ -44,42 +45,69 @@ type Plugin struct {
 
 // Options 构造一个插件。
 type Options struct {
-	Impl      string            // "api"（默认）| "html"
-	APIDomains []string         // APP API 域名列表（api 实现）
-	HTMLDomains []string        // 网页域名列表（html 实现）
-	ImageHost string            // 图片 CDN 域名
-	ImageHosts []string         // 图片 CDN 域名池（轮询）
-	Retry     int
-	Username  string
-	Password  string
-	Cookies   map[string]string // AVS 等
+	Impl        string            // "api"（默认）| "html"
+	APIDomains  []string          // APP API 域名列表（api 实现）
+	HTMLDomains []string          // 网页域名列表（html 实现）
+	ImageHost   string            // 图片 CDN 域名（单个，兼容旧配置）
+	ImageHosts  []string          // 图片 CDN 域名池（轮询）
+	Retry       int
+	Username    string
+	Password    string
+	Cookies     map[string]string // AVS 等
+	InsecureTLS bool              // 跳过 TLS 证书校验（应对证书过期 / 自签证书）
+}
+
+// 网页端域名 —— 这些走 Cloudflare，不能用作 APP 图片 CDN，
+// 当配置里被填成这些值时自动忽略，改用默认 APP CDN 域名池。
+var blockedImageHosts = map[string]bool{
+	"cdn-msp2.18comic.org":  true,
+	"cdn-msp2.18comic.vip":  true,
+	"cdn-msp2.jm-comic.club": true,
+	"18comic.vip":           true,
+	"18comic.org":           true,
 }
 
 func New(opts Options) (*Plugin, error) {
 	if opts.Impl == "" {
 		opts.Impl = "api"
 	}
+	// 过滤掉被 CF 拦截的网页端域名；空值留给 api_client 用内置默认池。
+	imageHost := strings.TrimSpace(opts.ImageHost)
+	if blockedImageHosts[imageHost] {
+		imageHost = ""
+	}
+	imageHosts := make([]string, 0, len(opts.ImageHosts))
+	for _, h := range opts.ImageHosts {
+		h = strings.TrimSpace(h)
+		if h != "" && !blockedImageHosts[h] {
+			imageHosts = append(imageHosts, h)
+		}
+	}
 	p := &Plugin{
 		impl:      opts.Impl,
 		username:  opts.Username,
 		password:  opts.Password,
-		imageHost: opts.ImageHost,
+		imageHost: imageHost,
 	}
 	if p.imageHost == "" {
-		if len(opts.ImageHosts) > 0 {
-			p.imageHost = opts.ImageHosts[0]
+		if len(imageHosts) > 0 {
+			p.imageHost = imageHosts[0]
 		} else {
 			p.imageHost = "cdn-msp2.jmapiproxy2.cc"
 		}
+	}
+	if len(imageHosts) == 0 {
+		imageHosts = []string{p.imageHost}
 	}
 
 	switch opts.Impl {
 	case "api", "":
 		c, err := newAPIClient(apiClientConfig{
-			APIDomains: opts.APIDomains,
-			ImageHosts: orFallback(opts.ImageHosts, []string{p.imageHost}),
-			Retry:      opts.Retry,
-			Cookies:    opts.Cookies,
+			APIDomains:  opts.APIDomains,
+			ImageHosts:  imageHosts,
+			Retry:       opts.Retry,
+			Cookies:     opts.Cookies,
+			InsecureTLS: opts.InsecureTLS,
 		})
 		if err != nil {
 			return nil, err
