@@ -11,6 +11,7 @@ package syncfav
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"tsukimi/internal/domain"
@@ -30,12 +31,16 @@ type Service struct {
 	bus    *plugin.EventBus
 	logger *plugin.Logger
 
-	interval time.Duration
+	mu       sync.Mutex
+	enabled  bool          // 当前是否启用轮询
+	interval time.Duration // 当前轮询间隔
 	cancel   context.CancelFunc
 }
 
-// New 构造一个同步服务。interval<=0 表示不启动轮询。
+// New 构造一个同步服务。enabled=false 或 interval<=0 时不启动轮询，
+// 但 Service 始终可用于手动 TickNow。
 func New(srcReg *source.Registry, sess *session.Manager, lib *library.Service, eng *download.Engine, bus *plugin.EventBus, logger *plugin.Logger, interval time.Duration) *Service {
+	enabled := interval > 0
 	return &Service{
 		srcReg:   srcReg,
 		sess:     sess,
@@ -43,29 +48,76 @@ func New(srcReg *source.Registry, sess *session.Manager, lib *library.Service, e
 		eng:      eng,
 		bus:      bus,
 		logger:   logger,
+		enabled:  enabled,
 		interval: interval,
 	}
 }
 
-// Start 启动后台轮询 goroutine，直到 ctx 被取消。
+// Start 启动后台轮询 goroutine（若已启用）。
 func (s *Service) Start(ctx context.Context) {
-	if s.interval <= 0 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.startLocked(ctx)
+}
+
+// startLocked 调用方必须持有 s.mu。
+func (s *Service) startLocked(ctx context.Context) {
+	if !s.enabled || s.interval <= 0 {
 		return
 	}
-	ctx, s.cancel = context.WithCancel(ctx)
+	if s.cancel != nil {
+		// 已在跑：先停掉旧的再重启，避免泄漏 goroutine。
+		s.cancel()
+		s.cancel = nil
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	s.cancel = cancel
 	go s.loop(ctx)
 }
 
 // Stop 取消轮询。
 func (s *Service) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.cancel != nil {
 		s.cancel()
+		s.cancel = nil
 	}
+}
+
+// UpdateConfig 热更新轮询配置，无需重启进程。
+//   - enabled=false：停止轮询（手动 TickNow 仍可用）。
+//   - interval 变化：自动重启 ticker。
+//
+// 返回是否实际发生了变更（用于决定是否写日志）。
+func (s *Service) UpdateConfig(ctx context.Context, enabled bool, interval time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := s.enabled != enabled || s.interval != interval
+	s.enabled = enabled
+	s.interval = interval
+	if !enabled || interval <= 0 {
+		// 关闭轮询
+		if s.cancel != nil {
+			s.cancel()
+			s.cancel = nil
+		}
+		return changed
+	}
+	// 启用或间隔变化：重启 ticker
+	s.startLocked(ctx)
+	return changed
 }
 
 func (s *Service) loop(ctx context.Context) {
 	// 启动后先等一个 interval 再首次拉取，避免与启动期其它 IO 抢资源。
-	t := time.NewTicker(s.interval)
+	s.mu.Lock()
+	interval := s.interval
+	s.mu.Unlock()
+	if interval <= 0 {
+		return
+	}
+	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {

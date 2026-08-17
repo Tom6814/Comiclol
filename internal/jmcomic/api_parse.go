@@ -323,6 +323,20 @@ func parseFavoritesAPI(plain, folderID string, page int) (*domain.FavoritePage, 
 			Folder:   folderID,
 		})
 	}
+	// 字段别名兜底：APP API 收藏列表里封面字段叫 "image" 而非 "cover_url"。
+	for i := range items {
+		if items[i].CoverURL == "" {
+			if raw, ok := root["list"].([]any); ok {
+				if i < len(raw) {
+					if mm, ok := raw[i].(map[string]any); ok {
+						if img := asString(mapGet(mm, "image")); img != "" {
+							items[i].CoverURL = img
+						}
+					}
+				}
+			}
+		}
+	}
 
 	// 收藏夹分类
 	var folders []domain.Folder

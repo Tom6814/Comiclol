@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"tsukimi/internal/config"
 	"tsukimi/internal/domain"
@@ -310,6 +311,14 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	if err := s.cfg.Save(); err != nil {
 		writeErr(w, 500, "保存失败: %v", err)
 		return
+	}
+	// 热更新同步轮询（无需重启进程）
+	if s.syncSvc != nil && (u.SyncEnabled != nil || u.SyncInterval != nil) {
+		enabled := s.cfg.SyncEnabled && s.cfg.SyncInterval > 0
+		interval := time.Duration(s.cfg.SyncInterval) * time.Second
+		if s.syncSvc.UpdateConfig(r.Context(), enabled, interval) {
+			s.logger.Infof("config", "同步配置已热更新：enabled=%v interval=%ds", enabled, s.cfg.SyncInterval)
+		}
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }

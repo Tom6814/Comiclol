@@ -93,13 +93,13 @@ func main() {
 	eng.Start(cfg.ChapterJobs)
 
 	// 6) 同步服务
-	var syncSvc *syncfav.Service
+	// 总是构造 Service（让前端「立即同步」随时可用），只在启用轮询时才 Start()。
+	syncSvc := syncfav.New(srcReg, sess, lib, eng, bus, logger, time.Duration(cfg.SyncInterval)*time.Second)
 	if cfg.SyncEnabled && cfg.SyncInterval > 0 {
-		syncSvc = syncfav.New(srcReg, sess, lib, eng, bus, logger, time.Duration(cfg.SyncInterval)*time.Second)
 		syncSvc.Start(context.Background())
 		logger.Infof("main", "同步服务已启用，间隔 %ds", cfg.SyncInterval)
 	} else {
-		logger.Infof("main", "同步服务未启用（sync_enabled=false 或 sync_interval<=0）")
+		logger.Infof("main", "自动轮询未启用（仍可手动触发同步）")
 	}
 
 	// 7) HTTP 服务

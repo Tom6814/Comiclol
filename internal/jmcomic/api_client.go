@@ -401,7 +401,17 @@ func (c *apiClient) FetchFavorites(ctx context.Context, sess domain.Session, fol
 	if err != nil {
 		return nil, err
 	}
-	return parseFavoritesAPI(plain, folderID, page)
+	fp, err := parseFavoritesAPI(plain, folderID, page)
+	if err != nil {
+		return nil, err
+	}
+	// 收藏列表接口不下发封面图（image 字段为空），统一用 coverURL 模式补全。
+	for i := range fp.Items {
+		if fp.Items[i].CoverURL == "" {
+			fp.Items[i].CoverURL = c.coverURL(fp.Items[i].MangaID)
+		}
+	}
+	return fp, nil
 }
 
 // ---- Image ----

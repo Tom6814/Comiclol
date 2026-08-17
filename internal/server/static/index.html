@@ -109,6 +109,16 @@
     background-size: cover; background-position: center; position: relative; overflow: hidden;
   }
   .cover.empty { display: flex; align-items: center; justify-content: center; color: var(--ink-3); font-size: 12px; }
+  /* 收藏卡片封面容器：统一裁剪 + 错误回退 */
+  .cover-wrap { aspect-ratio: 3/4; border-radius: 8px; overflow: hidden; background: var(--surface-2); position: relative; }
+  .cover-wrap .cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cover-fallback {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink-3); font-family: var(--serif); font-size: 36px;
+    background: linear-gradient(135deg, var(--surface-2), var(--bg-soft));
+  }
+  .cover-fallback > span { opacity: 0.55; }
   .cover .badge {
     position: absolute; top: 6px; right: 6px;
     background: var(--sage); color: #fdf8ef; font-size: 10px;
@@ -568,13 +578,16 @@ function renderFavorites() {
   root.innerHTML = `
     <div class="grid">
       ${(fp.items||[]).map(it => `
-        <div class="manga-card">
-          <div class="cover ${it.cover_url?"":"empty"}" style="${it.cover_url?`background-image:url('${it.cover_url}')`:''}"></div>
+        <div class="manga-card" onclick="favDownload('${it.source_id}','${it.manga_id}',${JSON.stringify(it.title).replace(/"/g,'&quot;')})">
+          <div class="cover-wrap">
+            ${it.cover_url
+              ? `<img class="cover-img" src="${it.cover_url}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"><div class="cover cover-fallback" style="display:none;"><span>月</span></div>`
+              : `<div class="cover cover-fallback"><span>月</span></div>`}
+          </div>
           <div class="title">${escapeHtml(it.title)}</div>
           <div class="meta">${escapeHtml(it.author||"—")}</div>
-          <div style="display:flex; gap:6px; margin-top:4px;">
-            <button class="btn subtle" style="flex:1;" onclick="favDownload('${it.source_id}','${it.manga_id}',${JSON.stringify(it.title).replace(/"/g,'&quot;')})">下载</button>
-            <button class="btn subtle" onclick="location.hash='#/manga/${it.source_id}/${it.manga_id}'">详情</button>
+          <div style="display:flex; gap:6px; margin-top:4px; align-items:center;">
+            <span style="flex:1; font-size:12px; color:var(--ink-3);">点击下载</span>
           </div>
         </div>
       `).join("")}
@@ -677,7 +690,7 @@ function renderSettings() {
         </div>
         <div class="field"><label>间隔（秒）</label><input id="cfgSyncInterval" type="number" min="60" value="${c.sync_interval}"></div>
       </div>
-      <p style="color:var(--ink-3); font-size:12px; margin:6px 0 0;">改动需重启 tsukimi 进程才会生效。</p>
+      <p style="color:var(--ink-3); font-size:12px; margin:6px 0 0;">保存后即时生效，无需重启进程。</p>
     </div>
 
     <div class="actions" style="margin-top:14px;">
