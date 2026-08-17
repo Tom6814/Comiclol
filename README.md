@@ -18,6 +18,8 @@
   - `hook` —— 事件钩子（下载生命周期、同步生命周期等）
 - **下载引擎**：章节并发 + 章节内图片并发的两级并发；断点续传基于「目标文件已存在且大小>0 则跳过」，无需额外状态文件
 - **收藏同步**：定时轮询远端收藏夹，发现本地没有的漫画自动入队下载
+- **书库搜索**：按书名 / 作者过滤书库
+- **阅读进度**：上次读到哪一章哪一页保存在服务端（`data/history.json`），跨设备继续阅读
 - **单一二进制**：前端用 `go:embed` 打进二进制，最终产物只有一个可执行文件
 - **Morandi 前端**：暖奶白 + 灰玫瑰 + 鼠尾草绿。**刻意避开**玻璃磨砂、Material Design 3、蓝紫渐变那套「AI 味」的视觉语言
 
@@ -66,7 +68,7 @@ go build -o tsukimi .
 1. **添加服务**：选择本仓库（GitHub 集成），Zeabur 自动构建。
 2. **持久化数据**：为服务添加一个 Volume，挂载到 `/data`。
 3. **环境变量**：
-   - `TSUKIMI_DATA_DIR=/data` —— 书库、封面、下载文件全部落在持久化卷上
+   - `TSUKIMI_DATA_DIR=/data` —— 书库、封面、下载文件、阅读进度全部落在持久化卷上
    - （可选）`TSUKIMI_VERIFY_TLS=1` —— 强制校验禁漫 CDN 证书（默认跳过，因为证书状态不稳）
    - （可选）`TSUKIMI_CONFIG=/data/config.json` —— 显式指定配置文件位置
 4. **端口**：无需配置。程序会自动读取 Zeabur 注入的 `PORT` 环境变量，监听 `0.0.0.0:$PORT`。
@@ -124,6 +126,7 @@ go build -o tsukimi .
 ```
 $DATA_DIR/
 ├── library.json        # 书库元数据（所有已入库漫画）
+├── history.json        # 阅读进度（每本漫画上次读到的章节与页数）
 ├── library/            # 漫画章节图片
 │   └── jmcomic_<id>/
 │       └── <chapter_id>/
@@ -158,6 +161,9 @@ $DATA_DIR/
 | GET | `/api/library/{source}/{id}/cover` | 封面（本地无则 302 到远端） |
 | GET | `/api/library/{source}/{id}/{chapter}/pages` | 该章节已下载的图片列表 |
 | GET | `/api/library/{source}/{id}/{chapter}/{file}` | 单张图片（带长缓存） |
+| GET | `/api/history` | 全部阅读进度（按更新时间倒序） |
+| GET | `/api/history/{source}/{id}` | 某本漫画的阅读进度（无则 404） |
+| PUT | `/api/history/{source}/{id}` | 保存阅读进度 `{chapter_id, page, total_pages}` |
 | GET | `/api/favorites?source=jmcomic&page=N` | 远端收藏分页 |
 | POST | `/api/favorites/sync` | 手动触发一次收藏同步 |
 | POST | `/api/downloads` | 提交一个下载任务 |

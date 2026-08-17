@@ -43,6 +43,18 @@ type Chapter struct {
 	ScrambleID string `json:"scramble_id,omitempty"`
 }
 
+// ReadingProgress records where the user left off in a manga.
+// Stored server-side so reading continues across devices.
+// Single-chapter works only ever record ChapterID (their one chapter).
+type ReadingProgress struct {
+	SourceID   string    `json:"source_id"`
+	MangaID    string    `json:"manga_id"`
+	ChapterID  string    `json:"chapter_id"`
+	Page       int       `json:"page"`        // 1-based page within the chapter
+	TotalPages int       `json:"total_pages"` // chapter's page count, for progress display
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 // Page is a single image within a chapter. Index is 1-based.
 type Page struct {
 	Index      int    `json:"index"`

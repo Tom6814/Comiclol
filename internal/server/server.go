@@ -26,6 +26,7 @@ import (
 	"tsukimi/internal/config"
 	"tsukimi/internal/domain"
 	"tsukimi/internal/download"
+	"tsukimi/internal/history"
 	"tsukimi/internal/library"
 	"tsukimi/internal/plugin"
 	"tsukimi/internal/session"
@@ -43,6 +44,7 @@ type Server struct {
 	lib     *library.Service
 	eng     *download.Engine
 	syncSvc *syncfav.Service
+	hist    *history.Service
 	sess    *session.Manager
 	srcReg  *source.Registry
 	sinkReg *sink.Registry
@@ -59,6 +61,7 @@ func New(
 	lib *library.Service,
 	eng *download.Engine,
 	syncSvc *syncfav.Service,
+	hist *history.Service,
 	sess *session.Manager,
 	srcReg *source.Registry,
 	sinkReg *sink.Registry,
@@ -66,7 +69,7 @@ func New(
 	logger *plugin.Logger,
 ) *Server {
 	s := &Server{
-		cfg: cfg, lib: lib, eng: eng, syncSvc: syncSvc,
+		cfg: cfg, lib: lib, eng: eng, syncSvc: syncSvc, hist: hist,
 		sess: sess, srcReg: srcReg, sinkReg: sinkReg,
 		bus: bus, logger: logger, broker: NewBroker(bus, logger),
 	}
@@ -156,6 +159,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/library/{source}/{id}/cover", s.handleMangaCover)
 	m.HandleFunc("GET /api/library/{source}/{id}/{chapter}/pages", s.handleChapterPages)
 	m.HandleFunc("GET /api/library/{source}/{id}/{chapter}/{file}", s.handlePageImage)
+
+	m.HandleFunc("GET /api/history", s.handleHistoryList)
+	m.HandleFunc("GET /api/history/{source}/{id}", s.handleHistoryGet)
+	m.HandleFunc("PUT /api/history/{source}/{id}", s.handleHistoryPut)
 
 	m.HandleFunc("GET /api/favorites", s.handleFavorites)
 	m.HandleFunc("POST /api/favorites/sync", s.handleSyncNow)
@@ -441,6 +448,74 @@ func (s *Server) handleMangaDelete(w http.ResponseWriter, r *http.Request) {
 	del := r.URL.Query().Get("files") == "1"
 	if err := s.lib.Remove(srcID, id, del); err != nil {
 		writeErr(w, 500, "删除失败: %v", err)
+		return
+	}
+	// 移出书库（无论是否删文件）都清掉阅读进度
+	if s.hist != nil {
+		_ = s.hist.Delete(srcID, id)
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// ----- history（阅读进度，服务端持久化）-----
+
+func (s *Server) handleHistoryList(w http.ResponseWriter, r *http.Request) {
+	if s.hist == nil {
+		writeJSON(w, 200, []any{})
+		return
+	}
+	list := s.hist.List()
+	if list == nil {
+		list = []domain.ReadingProgress{}
+	}
+	writeJSON(w, 200, list)
+}
+
+func (s *Server) handleHistoryGet(w http.ResponseWriter, r *http.Request) {
+	srcID := r.PathValue("source")
+	id := r.PathValue("id")
+	if s.hist == nil {
+		writeErr(w, 404, "无阅读进度")
+		return
+	}
+	p, ok := s.hist.Get(srcID, id)
+	if !ok {
+		writeErr(w, 404, "暂无阅读进度")
+		return
+	}
+	writeJSON(w, 200, p)
+}
+
+type historyPutReq struct {
+	ChapterID  string `json:"chapter_id"`
+	Page       int    `json:"page"`
+	TotalPages int    `json:"total_pages"`
+}
+
+func (s *Server) handleHistoryPut(w http.ResponseWriter, r *http.Request) {
+	srcID := r.PathValue("source")
+	id := r.PathValue("id")
+	var req historyPutReq
+	if err := readJSON(r, &req); err != nil {
+		writeErr(w, 400, "解析失败: %v", err)
+		return
+	}
+	if s.hist == nil {
+		writeErr(w, 503, "阅读进度服务不可用")
+		return
+	}
+	if req.ChapterID == "" || req.Page < 1 {
+		writeErr(w, 400, "chapter_id 与 page 必填且 page>=1")
+		return
+	}
+	if err := s.hist.Set(domain.ReadingProgress{
+		SourceID:   srcID,
+		MangaID:    id,
+		ChapterID:  req.ChapterID,
+		Page:       req.Page,
+		TotalPages: req.TotalPages,
+	}); err != nil {
+		writeErr(w, 500, "保存进度失败: %v", err)
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})

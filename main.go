@@ -16,6 +16,7 @@ import (
 
 	"tsukimi/internal/config"
 	"tsukimi/internal/download"
+	"tsukimi/internal/history"
 	"tsukimi/internal/jmcomic"
 	"tsukimi/internal/library"
 	"tsukimi/internal/plugin"
@@ -131,10 +132,14 @@ func main() {
 		logger.Infof("main", "自动轮询未启用（仍可手动触发同步）")
 	}
 
-	// 7) HTTP 服务
-	srv := server.New(cfg, lib, eng, syncSvc, sess, srcReg, sinkReg, bus, logger)
+	// 7) 阅读进度（服务端持久化，跨设备续读）
+	hist, err := history.New(st)
+	must(logger, "init history", err)
 
-	// 8) 启动 + 信号处理
+	// 8) HTTP 服务
+	srv := server.New(cfg, lib, eng, syncSvc, hist, sess, srcReg, sinkReg, bus, logger)
+
+	// 9) 启动 + 信号处理
 	go func() {
 		if err := srv.ListenAndServe(); err != nil {
 			logger.Errorf("main", "HTTP 服务退出: %v", err)

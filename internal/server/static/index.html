@@ -78,7 +78,14 @@
   .view-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 22px; gap: 16px; }
   .view-header h1 { font-family: var(--serif); font-weight: 500; font-size: 30px; margin: 0; letter-spacing: 0.5px; }
   .view-header .hint { color: var(--ink-3); font-size: 13px; }
-  .view-header .actions { display: flex; gap: 8px; }
+  .view-header .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .lib-search {
+    padding: 7px 12px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--surface); color: var(--ink); min-width: 200px; outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .lib-search:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(164, 116, 99, 0.18); }
+  .lib-search::placeholder { color: var(--ink-3); }
 
   /* === 按钮 === */
   .btn {
@@ -150,6 +157,11 @@
   .detail .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
   .tag { background: var(--surface-2); color: var(--ink-2); padding: 3px 9px; border-radius: var(--radius); font-size: 12px; transition: background-color 0.2s ease; }
   .tag:hover { background: var(--line-soft); }
+  .progress-hint {
+    display: inline-block; margin: 4px 0 10px; padding: 6px 12px; font-size: 13px;
+    color: var(--accent); background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent); border-radius: 2px;
+  }
   .chapter-list { margin-top: 18px; border-top: 1px solid var(--line-soft); }
   .chapter-item {
     display: flex; align-items: center; justify-content: space-between;
@@ -282,6 +294,7 @@
     <div class="view-header">
       <h1>书库</h1>
       <div class="actions">
+        <input type="search" id="libSearch" class="lib-search" placeholder="搜索书名 / 作者…" autocomplete="off">
         <button class="btn" id="btnSyncNow">立即同步收藏</button>
         <button class="btn primary" id="btnAddById">按 ID 下载</button>
       </div>
@@ -377,13 +390,14 @@ function renderLoading(rootId) {
 
 const state = {
   library: [],
+  libraryQuery: "",
   current: null,        // 当前详情 manga
   favoritesPage: 1,
   favorites: null,
   tasks: [],
   session: [],
   cfg: null,
-  reader: { src:"", id:"", ch:"", pages: [], chapName:"", chapters: [] },
+  reader: { src:"", id:"", ch:"", pages: [], chapName:"", chapters: [], totalPages: 0, saveTimer: null, lastSavedPage: 0 },
 };
 
 // ===== Routing =====
@@ -447,17 +461,25 @@ async function loadLibrary() {
 }
 function renderLibrary() {
   const root = document.getElementById("libraryGrid");
-  if (state.library.length === 0) {
-    root.innerHTML = '<div class="empty" style="grid-column: 1 / -1;"><div class="glyph">月</div><div class="msg">书库还没有作品。<br>去「收藏」同步或用「按 ID 下载」开始。</div></div>';
+  const q = state.libraryQuery;
+  const list = q
+    ? state.library.filter(m =>
+        (m.title || "").toLowerCase().includes(q) ||
+        (m.author || "").toLowerCase().includes(q))
+    : state.library;
+  if (list.length === 0) {
+    root.innerHTML = q
+      ? `<div class="empty" style="grid-column: 1 / -1;"><div class="glyph">月</div><div class="msg">没有匹配「${escapeHtml(q)}」的作品</div></div>`
+      : '<div class="empty" style="grid-column: 1 / -1;"><div class="glyph">月</div><div class="msg">书库还没有作品。<br>去「收藏」同步或用「按 ID 下载」开始。</div></div>';
     return;
   }
-  root.innerHTML = state.library.map(m => `
+  root.innerHTML = list.map(m => `
     <div class="manga-card" onclick="location.hash='#/manga/${m.source_id}/${m.id}'">
       <div class="cover ${m.cover_url ? "" : "empty"}" style="${m.cover_url ? `background-image:url(${m.cover_url})` : ""}">
         ${m.downloaded ? '<span class="badge">已下载</span>' : ""}
       </div>
       <div class="title">${escapeHtml(m.title)}</div>
-      <div class="meta">${m.author || "—"} · ${m.chapters} 章</div>
+      <div class="meta">${escapeHtml(m.author || "—")} · ${m.chapters} 章</div>
     </div>
   `).join("");
 }
@@ -468,6 +490,9 @@ async function loadDetail(src, id) {
   try {
     const m = await api.get(`/api/library/${src}/${id}`);
     state.current = m;
+    m.progress = null;
+    // 阅读进度（服务端持久化）；404 表示还没有
+    try { m.progress = await api.get(`/api/history/${src}/${id}`); } catch (e) {}
     renderDetail();
   } catch (e) { toast("加载详情失败: " + e.message, true); }
 }
@@ -475,6 +500,12 @@ function renderDetail() {
   const m = state.current;
   const root = document.getElementById("detailBody");
   const coverURL = `/api/library/${m.source_id}/${m.id}/cover`;
+  const prog = m.progress;
+  const progChap = prog ? (m.chapters||[]).find(c => c.id == prog.chapter_id) : null;
+  // 已下载：主按钮为「开始/继续阅读」；未下载才是「下载全部」
+  const mainBtn = m.downloaded
+    ? `<button class="btn primary" onclick="startReading()">${prog ? "继续阅读" : "开始阅读"}</button>`
+    : `<button class="btn primary" onclick="downloadAll()">下载全部</button>`;
   root.innerHTML = `
     <div class="detail">
       <div class="cover-big" style="background-image:url(${coverURL})"></div>
@@ -487,33 +518,39 @@ function renderDetail() {
           ${m.pub_date ? `<span>${m.pub_date}</span>` : ""}
           ${m.downloaded ? `<span style="color:var(--sage)">已下载</span>` : ""}
         </div>
+        ${prog && m.downloaded ? `<div class="progress-hint">上次读到：${progChap ? escapeHtml(progChap.title || ("第 "+progChap.index+" 章")) + " · " : ""}第 ${prog.page}/${prog.total_pages||"?"} 页<span style="color:var(--ink-3)">（${fmtTime(prog.updated_at)}）</span></div>` : ""}
         ${m.tags?.length ? `<div class="tags">${m.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join("")}</div>` : ""}
         ${m.description ? `<div class="desc">${escapeHtml(m.description).replace(/\n/g,"<br>")}</div>` : ""}
         <div style="margin: 18px 0;">
-          <button class="btn primary" onclick="downloadAll()">下载全部</button>
-          ${m.downloaded ? `<button class="btn danger" onclick="removeManga(true)" style="margin-left:8px;">删除文件</button>` : ""}
-          <button class="btn subtle"   onclick="removeManga(false)" style="margin-left:8px;">移出书库</button>
+          ${mainBtn}
+          <button class="btn danger" onclick="removeManga()" style="margin-left:8px;">移出书库</button>
         </div>
-        <div class="chapter-list" id="chapterList">
-          ${(m.chapters||[]).map(c => `
-            <div class="chapter-item" data-chap="${c.id}">
-              <div>
-                <span class="name">${escapeHtml(c.title || ("第 "+c.index+" 章"))}</span>
-                <span class="pages">${c.page_count}P</span>
-              </div>
-              <div style="display:flex; align-items:center;">
-                <span class="status missing" id="chap-status-${c.id}">未下载</span>
-                <div class="ctrls">
-                  <button class="btn subtle" onclick="downloadChapter('${c.id}')">下载</button>
-                  <button class="btn subtle" onclick="readChapter('${c.id}')">阅读</button>
-                </div>
-              </div>
-            </div>
-          `).join("")}
-        </div>
+        <div class="chapter-list" id="chapterList"></div>
       </div>
     </div>
   `;
+  // 渲染章节列表（独立渲染，便于下载后刷新状态）
+  renderChapterList();
+}
+function renderChapterList() {
+  const m = state.current;
+  const root = document.getElementById("chapterList");
+  if (!root) return;
+  root.innerHTML = (m.chapters||[]).map(c => `
+    <div class="chapter-item" data-chap="${c.id}">
+      <div>
+        <span class="name">${escapeHtml(c.title || ("第 "+c.index+" 章"))}</span>
+        <span class="pages">${c.page_count}P</span>
+      </div>
+      <div style="display:flex; align-items:center;">
+        <span class="status missing" id="chap-status-${c.id}">未下载</span>
+        <div class="ctrls">
+          <button class="btn subtle" onclick="downloadChapter('${c.id}')">下载</button>
+          <button class="btn subtle" onclick="readChapter('${c.id}')">阅读</button>
+        </div>
+      </div>
+    </div>
+  `).join("");
   // 检查每章是否已下载
   (m.chapters||[]).forEach(async c => {
     try {
@@ -528,6 +565,31 @@ function renderDetail() {
     } catch (e) {}
   });
 }
+function fmtTime(s) {
+  if (!s) return "";
+  const d = new Date(s);
+  if (isNaN(d)) return "";
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+// startReading：从历史位置（或第一个已下载章节）开始阅读
+async function startReading() {
+  const m = state.current;
+  const chaps = m.chapters || [];
+  let target = null;
+  if (m.progress && m.progress.chapter_id) {
+    target = chaps.find(c => c.id == m.progress.chapter_id) || null;
+  }
+  if (!target) {
+    for (const c of chaps) {
+      const ok = await fetch(`/api/library/${m.source_id}/${m.id}/${c.id}/pages`)
+        .then(r => r.ok ? r.json() : null).then(j => j && j.count > 0).catch(() => false);
+      if (ok) { target = c; break; }
+    }
+  }
+  if (!target) { toast("没有可阅读的已下载章节", true); return; }
+  location.hash = `#/read/${m.source_id}/${m.id}/${target.id}`;
+}
 async function downloadAll()      { await submitDownload(state.current.source_id, state.current.id, state.current.title, null); }
 async function downloadChapter(id){ await submitDownload(state.current.source_id, state.current.id, state.current.title, [id]); }
 async function submitDownload(src, id, title, chapters) {
@@ -537,18 +599,18 @@ async function submitDownload(src, id, title, chapters) {
     setTimeout(loadTasks, 200);
   } catch (e) { toast("提交下载失败: " + e.message, true); }
 }
-async function removeManga(deleteFiles) {
-  if (!confirm(deleteFiles ? "确认删除文件和元数据？" : "确认从书库移除（保留文件）？")) return;
+async function removeManga() {
+  if (!confirm("确认移出书库？将同时删除本地下载的文件与阅读进度。")) return;
   try {
-    await api.del(`/api/library/${state.current.source_id}/${state.current.id}?files=${deleteFiles?"1":"0"}`);
-    toast("已删除");
+    await api.del(`/api/library/${state.current.source_id}/${state.current.id}?files=1`);
+    toast("已移出书库");
     location.hash = "#/";
-  } catch (e) { toast("删除失败: " + e.message, true); }
+  } catch (e) { toast("移出失败: " + e.message, true); }
 }
 
 // ===== Reader =====
 async function loadReader(src, id, ch) {
-  state.reader = { src, id, ch, pages: [], chapName: "", chapters: state.current?.chapters || [] };
+  state.reader = { src, id, ch, pages: [], chapName: "", chapters: [], totalPages: 0, saveTimer: null, lastSavedPage: 0 };
   document.getElementById("readerChapName").textContent = "加载中…";
   renderLoading("readerPages");
   try {
@@ -557,25 +619,104 @@ async function loadReader(src, id, ch) {
     state.reader.chapters = m.chapters || [];
     const r = await api.get(`/api/library/${src}/${id}/${ch}/pages`);
     state.reader.pages = r.pages || [];
+    state.reader.totalPages = r.count || state.reader.pages.length;
     const chap = (m.chapters||[]).find(c => c.id == ch);
     state.reader.chapName = chap?.title || ("第 "+chap?.index+" 章") || ch;
     document.getElementById("readerChapName").textContent = state.reader.chapName;
-    renderReaderPages();
+    // 先查阅读进度，再渲染：恢复时直接从目标页附近开始加载
+    let resumePage = 0;
+    try {
+      const prog = await api.get(`/api/history/${src}/${id}`);
+      if (prog && String(prog.chapter_id) === String(ch) && prog.page > 1) {
+        resumePage = prog.page;
+      }
+    } catch (e) {}
+    renderReaderPages(resumePage);
   } catch (e) {
     document.getElementById("readerPages").innerHTML = `<div class="empty"><div class="glyph">月</div><div class="msg">章节尚未下载：${e.message}<br><button class="btn" onclick="downloadChapter('${ch}')">下载本章</button></div></div>`;
   }
 }
-function renderReaderPages() {
+function renderReaderPages(resumePage) {
   const root = document.getElementById("readerPages");
   if (state.reader.pages.length === 0) {
     root.innerHTML = `<div class="empty"><div class="glyph">月</div><div class="msg">空章节</div></div>`;
     return;
   }
-  // 用 IntersectionObserver 做懒加载
-  root.innerHTML = state.reader.pages.map((p, i) =>
-    `<img data-src="${p}" data-idx="${i}" alt="page ${i+1}" style="min-height: 200px;">`
-  ).join("");
+  // 继续阅读：只立即加载目标页及其下方窗口，上方最多预载 1 张。
+  // 上方图片加载会撑开内容、把目标页推走（页面自己移动），所以上方不预载。
+  // 下方图片撑开只增加总高度，不影响视口内内容。
+  const W = 4; // 目标页下方窗口半径
+  const win = new Set();
+  if (resumePage && resumePage >= 1) {
+    for (let i = resumePage; i <= Math.min(state.reader.pages.length, resumePage + W); i++) win.add(i);
+    if (resumePage > 1) win.add(resumePage - 1); // 上方最多 1 张，便于向上回看
+  }
+  root.innerHTML = state.reader.pages.map((p, i) => {
+    const idx = i + 1;
+    return win.has(idx)
+      ? `<img src="${p}" data-idx="${i}" alt="page ${idx}" style="min-height: 200px;">`
+      : `<img data-src="${p}" data-idx="${i}" alt="page ${idx}" style="min-height: 200px;">`;
+  }).join("");
   lazyImages();
+  if (resumePage) scrollToPage(resumePage);
+}
+function scrollToPage(page) {
+  const container = document.getElementById("view-reader");
+  const imgs = document.querySelectorAll("#readerPages img");
+  const img = imgs[page - 1];
+  if (!img) return;
+  const ANCHOR = 70; // 目标页顶部与视口顶部的固定距离（顶部工具栏高度）
+  let anchorPos = ANCHOR;
+  const position = () => {
+    // 手动定位到滚动容器（offsetTop 相对 #view-reader），补偿顶部固定工具栏
+    container.scrollTop = Math.max(0, img.offsetTop - ANCHOR);
+    anchorPos = img.offsetTop - container.scrollTop;
+  };
+  requestAnimationFrame(position);
+  // 锚定补偿：图片加载撑开上方内容时，按增量调整 scrollTop，
+  // 保证目标页在视口中的位置不变（页面不会自己移动）。
+  const stabilize = () => {
+    const now = img.offsetTop - container.scrollTop;
+    const delta = now - anchorPos;
+    if (Math.abs(delta) > 1) {
+      container.scrollTop += delta;
+      anchorPos = img.offsetTop - container.scrollTop;
+    }
+  };
+  const pending = [...document.querySelectorAll("#readerPages img[src]")].filter(im => !im.complete);
+  pending.forEach(im => {
+    im.addEventListener("load", stabilize, { once: true });
+    im.addEventListener("error", stabilize, { once: true });
+  });
+  setTimeout(position, 800); // 兜底
+}
+// 当前阅读页：视口上 1/3 处对应的图片序号（1-based）
+function currentPage() {
+  const container = document.getElementById("view-reader");
+  const imgs = document.querySelectorAll("#readerPages img");
+  if (!imgs.length) return 0;
+  const mid = container.scrollTop + container.clientHeight * 0.35;
+  for (let i = 0; i < imgs.length; i++) {
+    const el = imgs[i];
+    if (el.offsetTop + el.offsetHeight >= mid) return i + 1;
+  }
+  return imgs.length;
+}
+// 节流保存进度：滚动时收集，800ms 防抖合并为一次 PUT
+function saveProgress(page) {
+  state.reader.lastSavedPage = page;
+  clearTimeout(state.reader.saveTimer);
+  state.reader.saveTimer = setTimeout(() => {
+    api.put(`/api/history/${state.reader.src}/${state.reader.id}`, {
+      chapter_id: state.reader.ch,
+      page,
+      total_pages: state.reader.totalPages,
+    }).catch(() => {});
+  }, 800);
+}
+function saveProgressNow() {
+  const page = currentPage();
+  if (page > 0) saveProgress(page);
 }
 function lazyImages() {
   const imgs = document.querySelectorAll("#readerPages img[data-src]");
@@ -591,7 +732,7 @@ function lazyImages() {
   }, { rootMargin: "300px" });
   imgs.forEach(img => io.observe(img));
 }
-document.getElementById("readerClose").onclick  = () => history.back();
+document.getElementById("readerClose").onclick  = () => { saveProgressNow(); history.back(); };
 document.getElementById("readerPrevChap").onclick = () => navigateChapter(-1);
 document.getElementById("readerNextChap").onclick = () => navigateChapter(1);
 document.getElementById("readerPages").onclick = () => {
@@ -605,6 +746,16 @@ document.getElementById("readerFullscreenBtn").onclick = () => {
     document.exitFullscreen().catch(()=>{});
   }
 };
+// 滚动时记录阅读进度（rAF 节流，避免每帧计算）
+let readerScrollRAF = null;
+document.getElementById("view-reader").addEventListener("scroll", () => {
+  if (readerScrollRAF) return;
+  readerScrollRAF = requestAnimationFrame(() => {
+    readerScrollRAF = null;
+    const page = currentPage();
+    if (page > 0 && page !== state.reader.lastSavedPage) saveProgress(page);
+  });
+}, { passive: true });
 
 function navigateChapter(delta) {
   const chaps = state.reader.chapters;
@@ -613,6 +764,8 @@ function navigateChapter(delta) {
   if (idx < 0) return;
   const next = chaps[idx + delta];
   if (!next) { toast(delta > 0 ? "已是最后一章" : "已是第一章"); return; }
+  // 切换前立即保存当前位置
+  saveProgressNow();
   location.hash = `#/read/${state.reader.src}/${state.reader.id}/${next.id}`;
 }
 async function readChapter(ch) {
@@ -854,6 +1007,10 @@ async function modalAdd() {
 }
 
 document.getElementById("btnAddById").onclick  = openAddByIdModal;
+document.getElementById("libSearch").addEventListener("input", e => {
+  state.libraryQuery = e.target.value.trim().toLowerCase();
+  renderLibrary();
+});
 document.getElementById("btnSyncNow").onclick  = async () => {
   try { await api.post("/api/favorites/sync"); toast("已触发同步"); }
   catch(e){ toast("同步失败: " + e.message, true); }
