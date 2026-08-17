@@ -55,12 +55,15 @@ type Task struct {
 	Origin     string    `json:"origin,omitempty"` // manual / sync / ...
 
 	// 运行时字段（不持久化）
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx     context.Context
+	cancel  context.CancelFunc
+	yielded bool // 已让位给单话任务（防止无限插队）
 }
 
 type Options struct {
 	ImageQuality int // JPEG 质量
+	ChapterJobs  int // 单个任务内并发下载的章节数（默认 4）
+	ImageWorkers int // 单章内并发下载的图片数（默认 8）
 }
 
 type Engine struct {
@@ -68,7 +71,10 @@ type Engine struct {
 	tasks map[string]*Task
 	order []string // 任务提交顺序（用于列表稳定）
 
-	queue   chan *Task
+	// 两级优先级队列：highQ 放新任务（单话优先），lowQ 放多话让位任务。
+	// worker 永远优先消费 highQ，highQ 清空后才轮到 lowQ，实现「单话优先」。
+	highQ chan *Task
+	lowQ  chan *Task
 	srcReg  *source.Registry
 	lib     *library.Service
 	bus     *plugin.EventBus
@@ -80,9 +86,16 @@ type Engine struct {
 }
 
 func NewEngine(srcReg *source.Registry, lib *library.Service, bus *plugin.EventBus, logger *plugin.Logger, sess *session.Manager, opts Options) *Engine {
+	if opts.ChapterJobs <= 0 {
+		opts.ChapterJobs = 4
+	}
+	if opts.ImageWorkers <= 0 {
+		opts.ImageWorkers = 8
+	}
 	return &Engine{
 		tasks:  map[string]*Task{},
-		queue:  make(chan *Task, 64),
+		highQ:  make(chan *Task, 64),
+		lowQ:   make(chan *Task, 256),
 		srcReg: srcReg,
 		lib:    lib,
 		bus:    bus,
@@ -103,13 +116,27 @@ func (e *Engine) Start(workers int) {
 }
 
 func (e *Engine) Stop() {
-	close(e.queue)
+	close(e.highQ)
+	close(e.lowQ)
 	e.wg.Wait()
 }
 
 func (e *Engine) loop() {
 	defer e.wg.Done()
-	for t := range e.queue {
+	for {
+		// 优先消费高优队列（新任务/单话），空后才取低优队列（多话让位）。
+		var t *Task
+		select {
+		case t = <-e.highQ:
+		default:
+			select {
+			case t = <-e.highQ:
+			case t = <-e.lowQ:
+			}
+		}
+		if t == nil {
+			return // 两个队列都已关闭
+		}
 		e.run(t)
 	}
 }
@@ -138,10 +165,11 @@ func (e *Engine) Submit(sourceID, mangaID, title, origin string, chapterIDs []st
 	e.order = append(e.order, id)
 	e.mu.Unlock()
 	e.bus.Emit(ctx, hook.DownloadQueued, hook.KeyTaskID, id, hook.KeySourceID, sourceID, hook.KeyMangaID, mangaID)
+	// 新任务一律进高优队列（可能是单话，先让 worker 取到再判定）。
 	select {
-	case e.queue <- t:
+	case e.highQ <- t:
 	default:
-		go func() { e.queue <- t }()
+		go func() { e.highQ <- t }()
 	}
 	return id, nil
 }
@@ -250,6 +278,22 @@ func (e *Engine) run(t *Task) {
 		chapters = picked
 	}
 
+	// 单话优先：多话任务让位给单话（单话先下完，多话排后）。
+	// 让位只发生一次（yielded），下次被取出时直接执行。
+	if len(chapters) > 1 && !t.yielded {
+		e.mu.Lock()
+		t.yielded = true
+		t.Status = StatusQueued
+		e.mu.Unlock()
+		e.logger.Infof("download", "任务 %s 多话(%d章) 让位给单话任务，转入低优队列", t.MangaID, len(chapters))
+		select {
+		case e.lowQ <- t:
+		default:
+			go func() { e.lowQ <- t }()
+		}
+		return
+	}
+
 	// 预计算总图片数（用于进度）；同时把已完成的本地章节计入。
 	total := 0
 	done := 0
@@ -271,9 +315,9 @@ func (e *Engine) run(t *Task) {
 		e.logger.Warnf("download", "保存元数据失败: %v", err)
 	}
 
-	// 章节级并发
+	// 章节级并发（单任务内多线程）
 	var chapterWg sync.WaitGroup
-	sem := make(chan struct{}, 4) // 同时最多 4 章
+	sem := make(chan struct{}, e.opts.ChapterJobs) // 任务内同时下载的章节数
 	var failed atomic.Bool
 
 	for _, c := range chapters {
@@ -330,7 +374,7 @@ func (e *Engine) downloadChapter(t *Task, src source.Source, manga *domain.Manga
 		return err
 	}
 	var wg sync.WaitGroup
-	imgSem := make(chan struct{}, 8) // 每章 8 张图并发
+	imgSem := make(chan struct{}, e.opts.ImageWorkers) // 单章内并发图片数
 	var failed atomic.Bool
 	for _, p := range pages {
 		p := p

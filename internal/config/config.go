@@ -12,8 +12,8 @@ type Config struct {
 
 	Addr        string `json:"addr"`          // HTTP listen address
 	DataDir     string `json:"data_dir"`      // root data directory (library + metadata)
-	Concurrency int    `json:"concurrency"`   // image download workers per chapter
-	ChapterJobs int    `json:"chapter_jobs"`  // parallel chapters within a manga
+	Concurrency int    `json:"concurrency"`   // 单章内并发下载的图片数
+	ChapterJobs int    `json:"chapter_jobs"`  // 单个任务内并发下载的章节数（任务级串行，一次只跑一个任务）
 	RetryTimes  int    `json:"retry_times"`   // per-request retry count
 	ImageQuality int   `json:"image_quality"` // jpeg re-encode quality (1-100), 0 = keep original where possible
 
@@ -45,7 +45,7 @@ func Default(dataDir string) *Config {
 		Addr:        ":7878",
 		DataDir:     dataDir,
 		Concurrency: 8,
-		ChapterJobs: 2,
+		ChapterJobs: 4,
 		RetryTimes:  5,
 		ImageQuality: 92,
 		SyncInterval: 600,

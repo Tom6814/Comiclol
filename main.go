@@ -91,10 +91,14 @@ func main() {
 	sinkReg.Register(local)
 
 	// 5) 下载引擎
+	// 任务级串行：一次只下载一个任务（Start(1)），其余排队等待；
+	// 单任务内部多线程（章节并发 ChapterJobs、图片并发 Concurrency）。
 	eng := download.NewEngine(srcReg, lib, bus, logger, sess, download.Options{
 		ImageQuality: cfg.ImageQuality,
+		ChapterJobs:  cfg.ChapterJobs,
+		ImageWorkers: cfg.Concurrency,
 	})
-	eng.Start(cfg.ChapterJobs)
+	eng.Start(1)
 
 	// 6) 同步服务
 	// 总是构造 Service（让前端「立即同步」随时可用），只在启用轮询时才 Start()。
