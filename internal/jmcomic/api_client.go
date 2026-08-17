@@ -145,7 +145,7 @@ func (c *apiClient) ensureCookies(ctx context.Context) error {
 	}
 	// 调 /setting 触发服务端下发 cookie
 	ts, token, tokenParam := fixTokenTriple()
-	_, _, err := c.requestJSON(ctx, "GET", apiPathSetting, nil, ts, token, tokenParam, APPTokenSecret)
+	_, _, err := c.requestJSON(ctx, "GET", apiPathSetting, nil, ts, token, tokenParam, APPTokenSecret, nil)
 	if err != nil {
 		return err
 	}
@@ -159,9 +159,10 @@ func (c *apiClient) ensureCookies(ctx context.Context) error {
 
 // requestJSON 发起一次 APP API 请求，自动注入 token/cookie，并解密响应 data。
 //
+// extraHeaders 用于附加方法专属头（如登录需要的 Content-Type）。
 // 返回 (解密后的 JSON 业务字段原始字节, 解密后的整段文本, err)。
-func (c *apiClient) requestJSON(ctx context.Context, method, path string, body io.Reader, ts, token, tokenParam, secret string) ([]byte, string, error) {
-	resp, err := c.doRequest(ctx, method, path, body, ts, token, tokenParam, false)
+func (c *apiClient) requestJSON(ctx context.Context, method, path string, body io.Reader, ts, token, tokenParam, secret string, extraHeaders map[string]string) ([]byte, string, error) {
+	resp, err := c.doRequest(ctx, method, path, body, ts, token, tokenParam, false, extraHeaders)
 	if err != nil {
 		return nil, "", err
 	}
@@ -197,7 +198,9 @@ func (c *apiClient) requestJSON(ctx context.Context, method, path string, body i
 }
 
 // doRequest 是底层 HTTP 调用，支持域名轮换与重试。
-func (c *apiClient) doRequest(ctx context.Context, method, path string, body io.Reader, ts, token, tokenParam string, isImage bool) (*http.Response, error) {
+// extraHeaders 用于附加如 Content-Type 之类的方法专属头。
+// body 若实现 io.Seeker（如 *bytes.Reader），重试前会自动 Seek 回起点。
+func (c *apiClient) doRequest(ctx context.Context, method, path string, body io.Reader, ts, token, tokenParam string, isImage bool, extraHeaders map[string]string) (*http.Response, error) {
 	var lastErr error
 	for di := 0; di < len(c.domains); di++ {
 		for attempt := 0; attempt <= c.retry; attempt++ {
@@ -208,11 +211,18 @@ func (c *apiClient) doRequest(ctx context.Context, method, path string, body io.
 			} else {
 				urlStr = "https://" + domain + path
 			}
+			// 重试前把可 Seek 的 body 重置回起点，避免第二次读到 EOF。
+			if seeker, ok := body.(io.Seeker); ok {
+				_, _ = seeker.Seek(0, io.SeekStart)
+			}
 			req, err := http.NewRequestWithContext(ctx, method, urlStr, body)
 			if err != nil {
 				return nil, err
 			}
 			c.applyHeaders(req, token, tokenParam, isImage, domain)
+			for k, v := range extraHeaders {
+				req.Header.Set(k, v)
+			}
 			resp, err := c.http.Do(req)
 			if err == nil {
 				// 图片域名失败时也收集 cookie；此处仅 API 请求收集
@@ -243,7 +253,9 @@ func (c *apiClient) doRequest(ctx context.Context, method, path string, body io.
 
 func (c *apiClient) applyHeaders(req *http.Request, token, tokenParam string, isImage bool, apiDomain string) {
 	req.Header.Set("User-Agent", appUA)
-	req.Header.Set("Accept-Encoding", "gzip, deflate")
+	// 注意：不要手动设置 Accept-Encoding。Go 的 http.Client 默认会自动加上
+	// "Accept-Encoding: gzip" 并在 transport 层透明解压；一旦手动设置，Go 会
+	// 认为调用方要自己处理，结果 io.ReadAll 拿到的是压缩后的二进制，JSON 解析失败。
 	if ck := c.snapshotCookies(); ck != "" {
 		req.Header.Set("Cookie", ck)
 	}
@@ -282,7 +294,9 @@ func (c *apiClient) Login(ctx context.Context, sess domain.Session, username, pa
 	form.Set("username", username)
 	form.Set("password", password)
 	body := form.Encode()
-	_, plain, err := c.requestJSON(ctx, "POST", apiPathLogin, bytes.NewReader([]byte(body)), ts, token, tokenParam, APPTokenSecret)
+	_, plain, err := c.requestJSON(ctx, "POST", apiPathLogin, bytes.NewReader([]byte(body)), ts, token, tokenParam, APPTokenSecret, map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+	})
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -326,7 +340,7 @@ func (c *apiClient) FetchAlbum(ctx context.Context, sess domain.Session, albumID
 	_ = c.ensureCookies(ctx)
 	ts, token, tokenParam := fixTokenTriple()
 	path := fmt.Sprintf("%s?id=%s", apiPathAlbum, albumID)
-	_, plain, err := c.requestJSON(ctx, "GET", path, nil, ts, token, tokenParam, APPTokenSecret)
+	_, plain, err := c.requestJSON(ctx, "GET", path, nil, ts, token, tokenParam, APPTokenSecret, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +354,7 @@ func (c *apiClient) FetchChapter(ctx context.Context, sess domain.Session, chapt
 	ts, token, tokenParam := fixTokenTriple()
 	// 章节详情
 	chPath := fmt.Sprintf("%s?id=%s", apiPathChapter, chapterID)
-	_, plain, err := c.requestJSON(ctx, "GET", chPath, nil, ts, token, tokenParam, APPTokenSecret)
+	_, plain, err := c.requestJSON(ctx, "GET", chPath, nil, ts, token, tokenParam, APPTokenSecret, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -383,7 +397,7 @@ func (c *apiClient) FetchFavorites(ctx context.Context, sess domain.Session, fol
 		folder = "0"
 	}
 	path := fmt.Sprintf("%s?page=%d&folder_id=%s&o=mr", apiPathFavorite, page, folder)
-	_, plain, err := c.requestJSON(ctx, "GET", path, nil, ts, token, tokenParam, APPTokenSecret)
+	_, plain, err := c.requestJSON(ctx, "GET", path, nil, ts, token, tokenParam, APPTokenSecret, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +409,7 @@ func (c *apiClient) FetchFavorites(ctx context.Context, sess domain.Session, fol
 func (c *apiClient) FetchImage(ctx context.Context, sess domain.Session, pg domain.Page) (domain.ImageData, error) {
 	// 图片请求不需要 token，但需要占位 cookie 与正确的 Referer/UA
 	ts := newTimestamp()
-	resp, err := c.doRequest(ctx, "GET", pg.URL, nil, ts, "", "", true)
+	resp, err := c.doRequest(ctx, "GET", pg.URL, nil, ts, "", "", true, nil)
 	if err != nil {
 		return domain.ImageData{}, err
 	}

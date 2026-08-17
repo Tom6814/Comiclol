@@ -60,10 +60,13 @@ func main() {
 	sess := session.New()
 
 	// 3) 来源（禁漫）
+	// 注意：jm.domains 配置的是网页域名（18comic.vip 等），仅供 HTML 实现使用；
+	// APP API 实现有自己专属的域名池（cdnhjk.net 等），由 newAPIClient 内置，
+	// 所以这里 APIDomains 留空，让它走内置默认值。
 	srcReg := source.NewRegistry()
 	jm, err := jmcomic.New(jmcomic.Options{
 		Impl:        readImpl(cfg),
-		APIDomains:  cfg.JM.Domains,
+		APIDomains:  nil,
 		HTMLDomains: cfg.JM.Domains,
 		ImageHost:   cfg.JM.ImageHost,
 		Retry:       cfg.RetryTimes,

@@ -350,6 +350,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password: req.Password,
 	})
 	if err != nil {
+		s.logger.Errorf("auth", "登录 %s 失败: %v", req.Source, err)
 		writeErr(w, 401, "登录失败: %v", err)
 		return
 	}
