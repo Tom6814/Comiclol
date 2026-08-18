@@ -31,6 +31,10 @@ type Manga struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 	Downloaded  bool      `json:"downloaded"`
 	LocalPath   string    `json:"local_path,omitempty"`
+	// Order 是入库顺序序号（越小越早入库），用于书库列表按入库顺序展示。
+	// 这与远端收藏列表的顺序一致（JM 收藏按时间倒序，同步入库时第一条 Order 最小），
+	// 不依赖任何时间戳，避免 AddedAt 精度/时区问题。
+	Order int `json:"order,omitempty"`
 }
 
 // Chapter is one installment of a manga (JMComic "photo").

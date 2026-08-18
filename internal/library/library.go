@@ -25,6 +25,9 @@ type Service struct {
 	st      *store.Store
 	mu      sync.RWMutex
 	cache   map[string]domain.Manga // in-memory copy for fast reads
+	// orderSeq 是全局入库顺序计数器，每次有新漫画入库时自增并赋值给其 Order。
+	// 持久化在 store 的 "library_order" 键，重启后续号，保证顺序稳定。
+	orderSeq int
 }
 
 func New(dataDir string, st *store.Store) (*Service, error) {
@@ -40,6 +43,49 @@ func New(dataDir string, st *store.Store) (*Service, error) {
 	for _, m := range list {
 		s.cache[key(m.SourceID, m.ID)] = m
 	}
+	// 恢复顺序计数器；同时给历史数据（无 Order）补一个稳定的 Order。
+	maxOrder := 0
+	for _, m := range s.cache {
+		if m.Order > maxOrder {
+			maxOrder = m.Order
+		}
+	}
+	// 任何缺 Order 的旧记录，按当前最大序号续号（保持相对先后）。
+	needsOrder := false
+	for _, m := range s.cache {
+		if m.Order == 0 {
+			needsOrder = true
+			break
+		}
+	}
+	if needsOrder {
+		// 按 AddedAt/UpdatedAt 升序补号，尽量保留历史先后；全零则任意但稳定。
+		type pair struct{ k string; m domain.Manga }
+		pairs := make([]pair, 0, len(s.cache))
+		for k, m := range s.cache {
+			pairs = append(pairs, pair{k, m})
+		}
+		sort.Slice(pairs, func(i, j int) bool {
+			ti := pairs[i].m.AddedAt
+			if ti.IsZero() {
+				ti = pairs[i].m.UpdatedAt
+			}
+			tj := pairs[j].m.AddedAt
+			if tj.IsZero() {
+				tj = pairs[j].m.UpdatedAt
+			}
+			return ti.Before(tj)
+		})
+		for _, p := range pairs {
+			if p.m.Order == 0 {
+				maxOrder++
+				p.m.Order = maxOrder
+				s.cache[p.k] = p.m
+			}
+		}
+		_ = st.Write("library", s.snapshot())
+	}
+	s.orderSeq = maxOrder
 	if err := os.MkdirAll(s.LibraryDir(), 0o755); err != nil {
 		return nil, err
 	}
@@ -103,6 +149,12 @@ func (s *Service) Upsert(m domain.Manga) error {
 		// 不能覆盖本地已确立的下载完成标记。
 		m.Downloaded = existing.Downloaded
 		m.LocalPath = existing.LocalPath
+		// 已入库记录保留原 Order（稳定排序依据），不被覆盖。
+		m.Order = existing.Order
+	} else {
+		// 新入库：分配下一个顺序号（越大越新入库）。
+		s.orderSeq++
+		m.Order = s.orderSeq
 	}
 	if m.AddedAt.IsZero() {
 		m.AddedAt = now()
@@ -138,9 +190,10 @@ func (s *Service) Get(sourceID, mangaID string) (domain.Manga, bool) {
 	return m, ok
 }
 
-// List returns all manga, newest added first (recently collected → oldest).
-// AddedAt reflects when a manga first entered the library (≈ collect time);
-// fall back to UpdatedAt when AddedAt is missing for any reason.
+// List returns all manga in library-entry order matching the remote favorites
+// order: 最新收藏在前。Order 是入库顺序号（同步时按远端收藏顺序赋值），
+// JM 收藏列表默认最新在前，所以第一条入库 Order 最小；要「最新在前」
+// 就按 Order 降序返回。完全不依赖任何时间戳。
 func (s *Service) List() []domain.Manga {
 	s.mu.RLock()
 	out := make([]domain.Manga, 0, len(s.cache))
@@ -148,7 +201,12 @@ func (s *Service) List() []domain.Manga {
 		out = append(out, m)
 	}
 	s.mu.RUnlock()
-	sort.Slice(out, func(i, j int) bool {
+	sort.SliceStable(out, func(i, j int) bool {
+		// 都有 Order：降序（新入库在前）。
+		if out[i].Order != 0 && out[j].Order != 0 {
+			return out[i].Order > out[j].Order
+		}
+		// 兜底：Order 缺失的旧记录，退化为 AddedAt 降序。
 		ti := out[i].AddedAt
 		if ti.IsZero() {
 			ti = out[i].UpdatedAt
