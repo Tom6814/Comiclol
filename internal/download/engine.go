@@ -149,6 +149,24 @@ func (e *Engine) Submit(sourceID, mangaID, title, origin string, chapterIDs []st
 	if _, ok := e.srcReg.Get(sourceID); !ok {
 		return "", fmt.Errorf("未知来源 %q", sourceID)
 	}
+	// 任务级去重：同一 (sourceID, mangaID) 已有排队中/运行中的任务时，复用它，
+	// 避免同一本漫画被重复提交（如同一收藏在同步列表里重复出现、或收藏了
+	// 整本+某一话的同一 album）。已完成或已失败的不复用。
+	e.mu.RLock()
+	var existing string
+	for _, tid := range e.order {
+		t := e.tasks[tid]
+		if t.SourceID == sourceID && t.MangaID == mangaID {
+			if t.Status == StatusQueued || t.Status == StatusRunning {
+				existing = tid
+				break
+			}
+		}
+	}
+	e.mu.RUnlock()
+	if existing != "" {
+		return existing, nil
+	}
 	id := newID()
 	ctx, cancel := context.WithCancel(context.Background())
 	t := &Task{
