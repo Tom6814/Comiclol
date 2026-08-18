@@ -336,6 +336,82 @@ func (s *Service) ReconcileDownloaded() int {
 	return changed
 }
 
+// ReorderByFavorites 按远端收藏顺序重新分配 Order，让书库列表与收藏顺序一致。
+//
+//   - orderedMangaIDs：远端收藏列表的 mangaID 序列，**最新在前**（即 JM 收藏默认顺序）。
+//   - 在收藏列表里且本地存在的漫画：按收藏顺序赋 Order（最新的给最大值，排在书库最前）。
+//   - 该 source 下不在收藏列表里的本地漫画（如按 ID 下载的）：统一排在收藏列表之后，
+//     彼此保持稳定（按当前 Order 降序续接）。
+//   - 其它 source 的漫画不受影响。
+//
+// 返回实际被重排的记录数。完全不依赖任何时间戳。
+func (s *Service) ReorderByFavorites(sourceID string, orderedMangaIDs []string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 收集该 source 下所有本地漫画（拷贝，避免边遍历边改），并按当前 Order 降序预排，
+	// 作为「不在收藏里」那一类的稳定基准。
+	var local []domain.Manga
+	for _, m := range s.cache {
+		if m.SourceID == sourceID {
+			local = append(local, m)
+		}
+	}
+	if len(local) == 0 {
+		return 0
+	}
+	sort.SliceStable(local, func(i, j int) bool {
+		return local[i].Order > local[j].Order // 当前 Order 降序
+	})
+
+	// 收藏顺序映射：mangaID -> 在收藏列表的位置（0 = 最新）。重复取最早出现的位置。
+	favIndex := make(map[string]int, len(orderedMangaIDs))
+	for i, id := range orderedMangaIDs {
+		if _, ok := favIndex[id]; !ok {
+			favIndex[id] = i
+		}
+	}
+	nFav := len(orderedMangaIDs)
+
+	// 不在收藏里的本地漫画（按预排顺序），排在所有收藏漫画之后。
+	var notInFav []domain.Manga
+	for _, m := range local {
+		if _, ok := favIndex[m.ID]; !ok {
+			notInFav = append(notInFav, m)
+		}
+	}
+
+	// 分配 Order：收藏里的取 [1, nFav]（最新→nFav，最老→1）；
+	// 不在收藏里的取 <= 0（按预排顺序依次为 0, -1, -2...），List 降序时会排在所有正数之后。
+	changed := 0
+	apply := func(m domain.Manga, newOrder int) {
+		if m.Order == newOrder {
+			return
+		}
+		m.Order = newOrder
+		s.cache[key(m.SourceID, m.ID)] = m
+		changed++
+	}
+	for _, m := range local {
+		if idx, ok := favIndex[m.ID]; ok {
+			apply(m, nFav-idx) // idx=0(最新) → nFav；idx=nFav-1(最老) → 1
+		}
+	}
+	for i, m := range notInFav {
+		apply(m, -(i+1)) // -1, -2, -3, ...（避开 0，0 在 List 里被当作「缺失」）
+	}
+
+	// 推进全局计数器，保证后续新入库的漫画 Order 仍大于所有已存在值。
+	if s.orderSeq < nFav {
+		s.orderSeq = nFav
+	}
+	if changed > 0 {
+		_ = s.st.Write("library", s.snapshot())
+	}
+	return changed
+}
+
+
 // splitKey 把 "sourceID:mangaID" 拆开。与 key() 配对。
 func splitKey(k string) [2]string {
 	for i := 0; i < len(k); i++ {

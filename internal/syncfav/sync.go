@@ -11,6 +11,8 @@ package syncfav
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -203,4 +205,38 @@ func (s *Service) maybeSync(ctx context.Context, src source.Source, fav domain.F
 		}
 		s.logger.Infof("sync", "发现新收藏：%s → 任务 %s", fav.Title, id)
 	}
+}
+
+// CollectFavoriteIDs 拉取指定 source 的全部收藏，返回 mangaID 列表，
+// 顺序与远端返回一致（JM 默认最新在前）。用于「按收藏顺序重排书库」。
+// 需要已登录；翻完所有页为止。
+func (s *Service) CollectFavoriteIDs(ctx context.Context, sourceID string) ([]string, error) {
+	src, ok := s.srcReg.Get(sourceID)
+	if !ok || !src.Capabilities().HasFavorites {
+		return nil, errors.New("该来源不支持收藏")
+	}
+	sess, ok := s.sess.Get(sourceID)
+	if !ok {
+		return nil, errors.New("未登录，无法拉取收藏")
+	}
+	var ids []string
+	folderID := ""
+	page := 1
+	for {
+		fp, err := src.Favorites(ctx, sess, folderID, page)
+		if err != nil {
+			return nil, fmt.Errorf("收藏第 %d 页失败: %w", page, err)
+		}
+		for _, it := range fp.Items {
+			ids = append(ids, it.MangaID)
+		}
+		if page >= fp.Pages || fp.Pages == 0 {
+			break
+		}
+		page++
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+	return ids, nil
 }

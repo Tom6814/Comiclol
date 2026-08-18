@@ -154,6 +154,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/logout", s.handleLogout)
 
 	m.HandleFunc("GET /api/library", s.handleLibrary)
+	m.HandleFunc("POST /api/library/reorder", s.handleReorderByFavorites)
 	m.HandleFunc("GET /api/library/{source}/{id}", s.handleMangaDetail)
 	m.HandleFunc("DELETE /api/library/{source}/{id}", s.handleMangaDelete)
 	m.HandleFunc("GET /api/library/{source}/{id}/cover", s.handleMangaCover)
@@ -423,6 +424,31 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, 200, out)
+}
+
+// handleReorderByFavorites 拉取指定来源的全量收藏，按收藏顺序重排书库 Order。
+// 用于让「新版本之前入库的旧漫画」也能按收藏顺序展示。需要已登录。
+func (s *Server) handleReorderByFavorites(w http.ResponseWriter, r *http.Request) {
+	if s.syncSvc == nil {
+		writeErr(w, 503, "同步服务不可用")
+		return
+	}
+	srcID := r.URL.Query().Get("source")
+	if srcID == "" {
+		writeErr(w, 400, "缺少 source 参数")
+		return
+	}
+	ids, err := s.syncSvc.CollectFavoriteIDs(r.Context(), srcID)
+	if err != nil {
+		writeErr(w, 502, "拉取收藏失败: %v", err)
+		return
+	}
+	changed := s.lib.ReorderByFavorites(srcID, ids)
+	s.logger.Infof("library", "按收藏顺序重排：%s 共 %d 条收藏，本地重排 %d 本", srcID, len(ids), changed)
+	writeJSON(w, 200, map[string]int{
+		"favorites": len(ids),
+		"reordered": changed,
+	})
 }
 
 func (s *Server) handleMangaDetail(w http.ResponseWriter, r *http.Request) {

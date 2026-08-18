@@ -338,6 +338,7 @@
       <div class="actions">
         <input type="search" id="libSearch" class="lib-search" placeholder="搜索书名 / 作者…" autocomplete="off">
         <button class="btn" id="btnSyncNow">立即同步收藏</button>
+        <button class="btn" id="btnReorderByFav" title="拉取收藏列表，把书库按收藏顺序重新排列（包括以前下载的旧漫画）">按收藏顺序重排</button>
         <button class="btn primary" id="btnAddById">按 ID 下载</button>
       </div>
     </div>
@@ -1100,6 +1101,21 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e =
 document.getElementById("btnSyncNow").onclick  = async () => {
   try { await api.post("/api/favorites/sync"); toast("已触发同步"); }
   catch(e){ toast("同步失败: " + e.message, true); }
+};
+document.getElementById("btnReorderByFav").onclick = async () => {
+  // 选择哪个来源：取当前会话里已登录的来源，默认 jmcomic
+  const src = (state.session && state.session[0] && state.session[0].source_id) || "jmcomic";
+  const btn = document.getElementById("btnReorderByFav");
+  btn.disabled = true; const old = btn.textContent; btn.textContent = "重排中…";
+  try {
+    const r = await api.post(`/api/library/reorder?source=${encodeURIComponent(src)}`);
+    toast(`已按收藏顺序重排（收藏 ${r.favorites} 条，重排 ${r.reordered} 本）`);
+    await loadLibrary();
+  } catch (e) {
+    toast("重排失败: " + e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
 };
 document.getElementById("btnRefreshTasks").onclick = loadTasks;
 
