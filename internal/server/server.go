@@ -444,6 +444,12 @@ func (s *Server) handleMangaDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		m = *mm
 	}
+	// 按磁盘实际文件校正「已下载」状态，确保重新部署后详情页主按钮正确。
+	// 文件是持久化真相来源，比 library.json 的标记更可靠。
+	m.Downloaded = s.lib.IsDownloaded(srcID, id)
+	if m.Downloaded && m.LocalPath == "" {
+		m.LocalPath = s.lib.MangaDir(srcID, id)
+	}
 	writeJSON(w, 200, m)
 }
 

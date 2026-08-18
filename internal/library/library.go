@@ -99,6 +99,10 @@ func (s *Service) Upsert(m domain.Manga) error {
 		if m.AddedAt.IsZero() {
 			m.AddedAt = existing.AddedAt
 		}
+		// 保留已下载状态：Upsert 用的是远端拉来的元数据（Downloaded 默认 false），
+		// 不能覆盖本地已确立的下载完成标记。
+		m.Downloaded = existing.Downloaded
+		m.LocalPath = existing.LocalPath
 	}
 	if m.AddedAt.IsZero() {
 		m.AddedAt = now()
@@ -207,6 +211,81 @@ func (s *Service) PageAbsPath(sourceID, mangaID, chapterID, file string) string 
 func (s *Service) HasChapterFiles(sourceID, mangaID, chapterID string) bool {
 	files, err := s.ListPages(sourceID, mangaID, chapterID)
 	return err == nil && len(files) > 0
+}
+
+// IsDownloaded reports whether any chapter images exist on disk for a manga.
+// 这是判断「是否已下载」的权威依据（文件在 $DATA_DIR 持久化），
+// 不依赖 library.json 里的 Downloaded 布尔标记——后者可能因重新部署、
+// 元数据未及时落盘等原因失真。
+func (s *Service) IsDownloaded(sourceID, mangaID string) bool {
+	dir := s.MangaDir(sourceID, mangaID)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sub, err := os.ReadDir(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, f := range sub {
+			if !f.IsDir() && isImage(f.Name()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ReconcileDownloaded 按磁盘实际文件校正每本漫画的 Downloaded 标记。
+// 启动时调用一次，确保重新部署后（/data 持久化、library.json 可能失真）
+// 书库列表的「已下载」徽标和详情页主按钮都与磁盘一致。
+// 返回被修正的记录数。
+func (s *Service) ReconcileDownloaded() int {
+	s.mu.Lock()
+	ids := make([][2]string, 0, len(s.cache))
+	for k := range s.cache {
+		ids = append(ids, splitKey(k))
+	}
+	s.mu.Unlock()
+
+	changed := 0
+	for _, id := range ids {
+		sourceID, mangaID := id[0], id[1]
+		onDisk := s.IsDownloaded(sourceID, mangaID)
+		s.mu.Lock()
+		m, ok := s.cache[key(sourceID, mangaID)]
+		if !ok {
+			s.mu.Unlock()
+			continue
+		}
+		if m.Downloaded != onDisk {
+			m.Downloaded = onDisk
+			if onDisk {
+				m.LocalPath = s.MangaDir(sourceID, mangaID)
+			}
+			s.cache[key(sourceID, mangaID)] = m
+			changed++
+		}
+		s.mu.Unlock()
+	}
+	if changed > 0 {
+		_ = s.st.Write("library", s.snapshot())
+	}
+	return changed
+}
+
+// splitKey 把 "sourceID:mangaID" 拆开。与 key() 配对。
+func splitKey(k string) [2]string {
+	for i := 0; i < len(k); i++ {
+		if k[i] == ':' {
+			return [2]string{k[:i], k[i+1:]}
+		}
+	}
+	return [2]string{k, ""}
 }
 
 func (s *Service) snapshot() []domain.Manga {

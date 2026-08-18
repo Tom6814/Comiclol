@@ -113,6 +113,11 @@ func main() {
 	sinkReg.Register(local)
 
 	// 5) 下载引擎
+	// 启动时按磁盘实际文件校正「已下载」标记——重新部署后 /data 持久化了文件，
+	// 但 library.json 的 Downloaded 可能失真；以磁盘为准。
+	if n := lib.ReconcileDownloaded(); n > 0 {
+		logger.Infof("main", "已按磁盘文件校正 %d 本漫画的下载状态", n)
+	}
 	// 任务级串行：一次只下载一个任务（Start(1)），其余排队等待；
 	// 单任务内部多线程（章节并发 ChapterJobs、图片并发 Concurrency）。
 	eng := download.NewEngine(srcReg, lib, bus, logger, sess, download.Options{
