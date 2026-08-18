@@ -64,6 +64,9 @@ type Options struct {
 	ImageQuality int // JPEG 质量
 	ChapterJobs  int // 单个任务内并发下载的章节数（默认 4）
 	ImageWorkers int // 单章内并发下载的图片数（默认 8）
+	// ImageRetries：单张图片下载失败后的重试次数（默认 3）。
+	// 单张图瞬时网络失败不再判整章失败，避免「部分章节下载失败」。
+	ImageRetries int
 }
 
 type Engine struct {
@@ -396,35 +399,61 @@ func (e *Engine) downloadChapter(t *Task, src source.Source, manga *domain.Manga
 			imgSem <- struct{}{}
 			defer func() { <-imgSem }()
 
-			e.bus.Emit(t.ctx, hook.DownloadImageBefore, hook.KeyMangaID, t.MangaID, hook.KeyChapterID, c.ID, hook.KeyPage, p.Index)
+			retries := e.opts.ImageRetries
+			if retries <= 0 {
+				retries = 3
+			}
+			var lastErr error
+			for attempt := 0; attempt <= retries; attempt++ {
+				if attempt > 0 {
+					// 指数退避：1s, 2s, 4s...（上限 8s），避免对 CF/CDN 雪上加霜
+					backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+					if backoff > 8*time.Second {
+						backoff = 8 * time.Second
+					}
+					select {
+					case <-time.After(backoff):
+					case <-t.ctx.Done():
+						return
+					}
+					e.logger.Infof("download", "重试 %s/%d 第 %d/%d 次", c.ID, p.Index, attempt, retries)
+				}
+				e.bus.Emit(t.ctx, hook.DownloadImageBefore, hook.KeyMangaID, t.MangaID, hook.KeyChapterID, c.ID, hook.KeyPage, p.Index)
 
-			data, err := src.FetchImage(t.ctx, sess, p)
-			if err != nil {
-				e.logger.Errorf("download", "取图 %s/%d 失败: %v", c.ID, p.Index, err)
-				failed.Store(true)
-				return
+				data, err := src.FetchImage(t.ctx, sess, p)
+				if err != nil {
+					lastErr = err
+					continue // 网络错误：值得重试
+				}
+				aid, _ := strconv.ParseInt(c.ID, 10, 64)
+				out, err := img.Decode(data.Reader, data.Suffix, p.ScrambleID, aid, p.FileName, e.opts.ImageQuality)
+				if err != nil {
+					// 解码失败通常是数据本身问题，重试也救不回；直接判失败
+					e.logger.Errorf("download", "解码 %s/%d 失败: %v", c.ID, p.Index, err)
+					failed.Store(true)
+					return
+				}
+				if err := os.WriteFile(tmp, out.Data, 0o644); err != nil {
+					e.logger.Errorf("download", "写文件 %s 失败: %v", tmp, err)
+					failed.Store(true)
+					return
+				}
+				final := dst
+				if out.Suffix != "" {
+					base := stripExt(filepath.Base(dst))
+					final = filepath.Join(filepath.Dir(dst), base+out.Suffix)
+				}
+				if err := os.Rename(tmp, final); err != nil {
+					e.logger.Errorf("download", "rename %s -> %s: %v", tmp, final, err)
+					failed.Store(true)
+					return
+				}
+				lastErr = nil
+				e.bus.Emit(t.ctx, hook.DownloadImageAfter, hook.KeyMangaID, t.MangaID, hook.KeyChapterID, c.ID, hook.KeyPage, p.Index, "path", final)
+				break // 成功
 			}
-			// 解码（去混淆）。aid 用章节 ID（photo_id），filename 用页面文件名。
-			aid, _ := strconv.ParseInt(c.ID, 10, 64)
-			out, err := img.Decode(data.Reader, data.Suffix, p.ScrambleID, aid, p.FileName, e.opts.ImageQuality)
-			if err != nil {
-				e.logger.Errorf("download", "解码 %s/%d 失败: %v", c.ID, p.Index, err)
-				failed.Store(true)
-				return
-			}
-			if err := os.WriteFile(tmp, out.Data, 0o644); err != nil {
-				e.logger.Errorf("download", "写文件 %s 失败: %v", tmp, err)
-				failed.Store(true)
-				return
-			}
-			final := dst
-			if out.Suffix != "" {
-				// 如果解码改变了后缀，更新最终文件名
-				base := stripExt(filepath.Base(dst))
-				final = filepath.Join(filepath.Dir(dst), base+out.Suffix)
-			}
-			if err := os.Rename(tmp, final); err != nil {
-				e.logger.Errorf("download", "rename %s -> %s: %v", tmp, final, err)
+			if lastErr != nil {
+				e.logger.Errorf("download", "取图 %s/%d 失败（重试 %d 次后）: %v", c.ID, p.Index, retries, lastErr)
 				failed.Store(true)
 				return
 			}
@@ -432,7 +461,6 @@ func (e *Engine) downloadChapter(t *Task, src source.Source, manga *domain.Manga
 			t.Done++
 			e.mu.Unlock()
 			e.emitProgress(t)
-			e.bus.Emit(t.ctx, hook.DownloadImageAfter, hook.KeyMangaID, t.MangaID, hook.KeyChapterID, c.ID, hook.KeyPage, p.Index, "path", final)
 		}()
 	}
 	wg.Wait()

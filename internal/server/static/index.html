@@ -5,8 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tsukimi · 月見</title>
 <style>
-  /* === Morandi 调色板 === */
+  /* === Morandi 调色板（莫兰迪暖灰玫瑰） ===
+     亮/暗两套色共用同一组变量名，由 <html data-theme="light|dark"> 切换。
+     暗色仍是莫兰迪：低饱和、偏暖的深褐底 + 柔和的灰玫瑰强调，避免冷蓝。 */
   :root {
+    --radius:    4px;
+    --radius-lg: 8px;
+    --serif:     "Cormorant Garamond", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", Georgia, serif;
+    --sans:      -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --mono:      "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  }
+  :root, [data-theme="light"] {
     --bg:        #e8e3d9;
     --bg-soft:   #eeeae2;
     --surface:   #f4f1ea;
@@ -20,12 +29,25 @@
     --accent-2:  #ce9987;
     --sage:      #86907b;
     --warn:      #be7e56;
-    --radius:    4px;
-    --radius-lg: 8px;
     --shadow:    0 2px 8px rgba(70, 63, 58, 0.05), 0 8px 24px rgba(70, 63, 58, 0.05);
-    --serif:     "Cormorant Garamond", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", Georgia, serif;
-    --sans:      -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-    --mono:      "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  [data-theme="dark"] {
+    --bg:        #2b2723;
+    --bg-soft:   #312d28;
+    --surface:   #36322d;
+    --surface-2: #403a34;
+    --ink:       #dcd4c8;
+    --ink-2:     #a99f93;
+    --ink-3:     #847b70;
+    --line:      #4a443e;
+    --line-soft: #3f3a35;
+    --accent:    #c99a86;
+    --accent-2:  #d8aa97;
+    --sage:      #93a088;
+    --warn:      #c98a5e;
+    --shadow:    0 2px 8px rgba(0, 0, 0, 0.25), 0 8px 24px rgba(0, 0, 0, 0.3);
+    color-scheme: dark;
   }
 
   * { box-sizing: border-box; }
@@ -44,6 +66,15 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; gap: 12px; color: var(--ink-3); }
+
+  /* === 主题切换按钮 === */
+  .theme-toggle {
+    width: 34px; height: 34px; border-radius: var(--radius);
+    border: 1px solid var(--line); background: var(--surface);
+    color: var(--ink-2); display: inline-flex; align-items: center; justify-content: center;
+    font-size: 16px; line-height: 1; transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  }
+  .theme-toggle:hover { background: var(--surface-2); color: var(--ink); }
 
   /* === 顶栏 === */
   header.topbar {
@@ -168,7 +199,7 @@
     padding: 12px 4px; border-bottom: 1px solid var(--line-soft);
     transition: background-color 0.2s ease;
   }
-  .chapter-item:hover { background: rgba(255,255,255,0.3); }
+  .chapter-item:hover { background: var(--surface-2); }
   .chapter-item .name { color: var(--ink); font-size: 14px; }
   .chapter-item .pages { color: var(--ink-3); font-size: 12px; margin-left: 8px; }
   .chapter-item .ctrls { display: flex; gap: 6px; }
@@ -272,6 +303,16 @@
     .detail .cover-big { max-width: 240px; }
   }
 </style>
+<script>
+  // 防白闪：在样式应用前先定好主题。优先 localStorage，其次系统偏好。
+  (function () {
+    try {
+      var t = localStorage.getItem("tsukimi-theme");
+      if (!t) t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  })();
+</script>
 </head>
 <body>
 
@@ -284,6 +325,7 @@
     <a href="#/settings"  data-nav="settings">设置</a>
   </nav>
   <div class="right">
+    <button id="themeToggle" class="theme-toggle" title="切换主题" aria-label="切换主题"></button>
     <span id="sessionPill" class="session-pill"><span class="dot"></span>未登录</span>
   </div>
 </header>
@@ -544,14 +586,14 @@ function renderChapterList() {
       </div>
       <div style="display:flex; align-items:center;">
         <span class="status missing" id="chap-status-${c.id}">未下载</span>
-        <div class="ctrls">
+        <div class="ctrls" id="chap-ctrls-${c.id}">
           <button class="btn subtle" onclick="downloadChapter('${c.id}')">下载</button>
           <button class="btn subtle" onclick="readChapter('${c.id}')">阅读</button>
         </div>
       </div>
     </div>
   `).join("");
-  // 检查每章是否已下载
+  // 检查每章是否已下载：已下载的隐藏「下载」按钮，只留「阅读」
   (m.chapters||[]).forEach(async c => {
     try {
       const r = await fetch(`/api/library/${m.source_id}/${m.id}/${c.id}/pages`);
@@ -560,6 +602,10 @@ function renderChapterList() {
         if (j.count > 0) {
           const el = document.getElementById("chap-status-" + c.id);
           if (el) { el.className = "status"; el.textContent = `本地 ${j.count}P`; }
+          const ctrls = document.getElementById("chap-ctrls-" + c.id);
+          if (ctrls) {
+            ctrls.innerHTML = `<button class="btn subtle" onclick="readChapter('${c.id}')">阅读</button>`;
+          }
         }
       }
     } catch (e) {}
@@ -916,6 +962,17 @@ function renderSettings() {
         </div>
         <div class="field"><label>间隔（秒）</label><input id="cfgSyncInterval" type="number" min="60" value="${c.sync_interval}"></div>
       </div>
+      <div class="field" style="margin-top:14px;">
+        <label>只同步最近 N 本</label>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <input id="cfgSyncRecent" type="number" min="0" max="100000" value="${c.sync_recent_count||0}" style="width:110px;">
+          <span style="color:var(--ink-3); font-size:13px;">本　</span>
+          <button class="btn subtle" type="button" onclick="document.getElementById('cfgSyncRecent').value=50">最近 50 本</button>
+          <button class="btn subtle" type="button" onclick="document.getElementById('cfgSyncRecent').value=100">最近 100 本</button>
+          <button class="btn subtle" type="button" onclick="document.getElementById('cfgSyncRecent').value=0">全部</button>
+        </div>
+        <p style="color:var(--ink-3); font-size:12px; margin:6px 0 0;">设为 0 表示同步全部收藏。收藏按远端顺序（最新在前）拉取，处理到第 N 本即停止；已下载的不再重复，之后只增量同步新收藏。</p>
+      </div>
       <p style="color:var(--ink-3); font-size:12px; margin:6px 0 0;">保存后即时生效，无需重启进程。</p>
     </div>
 
@@ -941,9 +998,11 @@ async function saveSettings() {
     image_quality: +document.getElementById("cfgImageQuality").value,
     sync_enabled:  document.getElementById("cfgSyncEnabled").value === "true",
     sync_interval: +document.getElementById("cfgSyncInterval").value,
+    sync_recent_count: +document.getElementById("cfgSyncRecent").value || 0,
   };
   try {
     await api.put("/api/config", patch);
+    state.cfg = { ...state.cfg, ...patch };
     toast("已保存");
   } catch (e) { toast(e.message, true); }
 }
@@ -1010,6 +1069,33 @@ document.getElementById("btnAddById").onclick  = openAddByIdModal;
 document.getElementById("libSearch").addEventListener("input", e => {
   state.libraryQuery = e.target.value.trim().toLowerCase();
   renderLibrary();
+});
+
+// ===== 主题切换（莫兰迪亮/暗） =====
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") || "light";
+}
+function applyThemeIcon() {
+  const btn = document.getElementById("themeToggle");
+  if (!btn) return;
+  btn.textContent = currentTheme() === "dark" ? "☀" : "☾";
+}
+function toggleTheme() {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("tsukimi-theme", next); } catch (e) {}
+  applyThemeIcon();
+}
+document.getElementById("themeToggle").onclick = toggleTheme;
+applyThemeIcon();
+// 跟随系统变化（仅当用户未手动选择时）
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e => {
+  let stored = null;
+  try { stored = localStorage.getItem("tsukimi-theme"); } catch (e) {}
+  if (!stored) {
+    document.documentElement.setAttribute("data-theme", e.matches ? "dark" : "light");
+    applyThemeIcon();
+  }
 });
 document.getElementById("btnSyncNow").onclick  = async () => {
   try { await api.post("/api/favorites/sync"); toast("已触发同步"); }

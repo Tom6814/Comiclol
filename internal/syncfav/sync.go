@@ -31,25 +31,27 @@ type Service struct {
 	bus    *plugin.EventBus
 	logger *plugin.Logger
 
-	mu       sync.Mutex
-	enabled  bool          // 当前是否启用轮询
-	interval time.Duration // 当前轮询间隔
-	cancel   context.CancelFunc
+	mu           sync.Mutex
+	enabled      bool          // 当前是否启用轮询
+	interval     time.Duration // 当前轮询间隔
+	recentCount  int           // 每次最多处理最近 N 本收藏，0 = 不限
+	cancel       context.CancelFunc
 }
 
 // New 构造一个同步服务。enabled=false 或 interval<=0 时不启动轮询，
 // 但 Service 始终可用于手动 TickNow。
-func New(srcReg *source.Registry, sess *session.Manager, lib *library.Service, eng *download.Engine, bus *plugin.EventBus, logger *plugin.Logger, interval time.Duration) *Service {
+func New(srcReg *source.Registry, sess *session.Manager, lib *library.Service, eng *download.Engine, bus *plugin.EventBus, logger *plugin.Logger, interval time.Duration, recentCount int) *Service {
 	enabled := interval > 0
 	return &Service{
-		srcReg:   srcReg,
-		sess:     sess,
-		lib:      lib,
-		eng:      eng,
-		bus:      bus,
-		logger:   logger,
-		enabled:  enabled,
-		interval: interval,
+		srcReg:      srcReg,
+		sess:        sess,
+		lib:         lib,
+		eng:         eng,
+		bus:         bus,
+		logger:      logger,
+		enabled:     enabled,
+		interval:    interval,
+		recentCount: recentCount,
 	}
 }
 
@@ -88,14 +90,16 @@ func (s *Service) Stop() {
 // UpdateConfig 热更新轮询配置，无需重启进程。
 //   - enabled=false：停止轮询（手动 TickNow 仍可用）。
 //   - interval 变化：自动重启 ticker。
+//   - recentCount 变化：下次 tick 生效。
 //
 // 返回是否实际发生了变更（用于决定是否写日志）。
-func (s *Service) UpdateConfig(ctx context.Context, enabled bool, interval time.Duration) bool {
+func (s *Service) UpdateConfig(ctx context.Context, enabled bool, interval time.Duration, recentCount int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	changed := s.enabled != enabled || s.interval != interval
+	changed := s.enabled != enabled || s.interval != interval || s.recentCount != recentCount
 	s.enabled = enabled
 	s.interval = interval
+	s.recentCount = recentCount
 	if !enabled || interval <= 0 {
 		// 关闭轮询
 		if s.cancel != nil {
@@ -136,6 +140,11 @@ func (s *Service) TickNow(ctx context.Context) error {
 
 func (s *Service) tick(ctx context.Context) error {
 	s.bus.Emit(ctx, hook.SyncTick, "at", time.Now().Unix())
+	s.mu.Lock()
+	recentCount := s.recentCount
+	s.mu.Unlock()
+	// recentCount>0：收藏列表按收藏时间倒序，前 N 本即「最近 N 本」。
+	// 按列表顺序逐条处理（已下载的跳过），累计见到 N 本即停止翻页。
 	for _, src := range s.srcReg.List() {
 		if !src.Capabilities().HasFavorites {
 			continue
@@ -146,6 +155,8 @@ func (s *Service) tick(ctx context.Context) error {
 		}
 		folderID := ""
 		page := 1
+		seen := 0 // 已遍历的「最近 N 本」计数
+		stop := recentCount > 0
 		for {
 			fp, err := src.Favorites(ctx, sess, folderID, page)
 			if err != nil {
@@ -154,6 +165,15 @@ func (s *Service) tick(ctx context.Context) error {
 			}
 			for _, it := range fp.Items {
 				s.maybeSync(ctx, src, it)
+				if stop {
+					seen++
+					if seen >= recentCount {
+						break
+					}
+				}
+			}
+			if stop && seen >= recentCount {
+				break
 			}
 			if page >= fp.Pages || fp.Pages == 0 {
 				break
@@ -171,13 +191,12 @@ func (s *Service) maybeSync(ctx context.Context, src source.Source, fav domain.F
 	m, has := s.lib.Get(src.ID(), fav.MangaID)
 	needs := !has
 	if has && m.Downloaded {
-		// 已经下载过：略过；未来可通过章节计数变化判断「有更新」再触发。
+		// 已经下载过：略过。
 		return
 	}
 	if needs {
 		s.bus.Emit(ctx, hook.SyncNewManga, hook.KeySourceID, src.ID(), hook.KeyMangaID, fav.MangaID, "title", fav.Title)
-		title := fav.Title
-		id, err := s.eng.Submit(src.ID(), fav.MangaID, title, "sync", nil)
+		id, err := s.eng.Submit(src.ID(), fav.MangaID, fav.Title, "sync", nil)
 		if err != nil {
 			s.logger.Warnf("sync", "提交下载 %s/%s 失败: %v", src.ID(), fav.MangaID, err)
 			return

@@ -20,6 +20,10 @@ type Config struct {
 	// Sync favorites polling
 	SyncEnabled  bool `json:"sync_enabled"`
 	SyncInterval int  `json:"sync_interval"` // seconds
+	// SyncRecentCount：每次同步最多处理「最近 N 本」收藏，0 表示不限（同步全部）。
+	// 远端收藏列表默认按收藏时间倒序，所以前 N 本即「最近 N 本」；
+	// 已下载的不计入新增，下载完成后旧的无需再管，后续只增量同步新收藏。
+	SyncRecentCount int `json:"sync_recent_count"`
 
 	// JMComic defaults
 	JM struct {

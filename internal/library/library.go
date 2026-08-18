@@ -134,7 +134,9 @@ func (s *Service) Get(sourceID, mangaID string) (domain.Manga, bool) {
 	return m, ok
 }
 
-// List returns all manga, newest updates first.
+// List returns all manga, newest added first (recently collected → oldest).
+// AddedAt reflects when a manga first entered the library (≈ collect time);
+// fall back to UpdatedAt when AddedAt is missing for any reason.
 func (s *Service) List() []domain.Manga {
 	s.mu.RLock()
 	out := make([]domain.Manga, 0, len(s.cache))
@@ -143,7 +145,15 @@ func (s *Service) List() []domain.Manga {
 	}
 	s.mu.RUnlock()
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].UpdatedAt.After(out[j].UpdatedAt)
+		ti := out[i].AddedAt
+		if ti.IsZero() {
+			ti = out[i].UpdatedAt
+		}
+		tj := out[j].AddedAt
+		if tj.IsZero() {
+			tj = out[j].UpdatedAt
+		}
+		return ti.After(tj)
 	})
 	return out
 }

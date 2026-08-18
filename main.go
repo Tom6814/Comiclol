@@ -119,12 +119,13 @@ func main() {
 		ImageQuality: cfg.ImageQuality,
 		ChapterJobs:  cfg.ChapterJobs,
 		ImageWorkers: cfg.Concurrency,
+		ImageRetries: cfg.RetryTimes,
 	})
 	eng.Start(1)
 
 	// 6) 同步服务
 	// 总是构造 Service（让前端「立即同步」随时可用），只在启用轮询时才 Start()。
-	syncSvc := syncfav.New(srcReg, sess, lib, eng, bus, logger, time.Duration(cfg.SyncInterval)*time.Second)
+	syncSvc := syncfav.New(srcReg, sess, lib, eng, bus, logger, time.Duration(cfg.SyncInterval)*time.Second, cfg.SyncRecentCount)
 	if cfg.SyncEnabled && cfg.SyncInterval > 0 {
 		syncSvc.Start(context.Background())
 		logger.Infof("main", "同步服务已启用，间隔 %ds", cfg.SyncInterval)

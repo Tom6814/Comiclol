@@ -262,24 +262,26 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
-		"addr":         s.cfg.Addr,
-		"data_dir":     s.cfg.DataDir,
-		"concurrency":  s.cfg.Concurrency,
-		"chapter_jobs": s.cfg.ChapterJobs,
-		"image_quality": s.cfg.ImageQuality,
-		"sync_enabled":  s.cfg.SyncEnabled,
-		"sync_interval": s.cfg.SyncInterval,
-		"jm":            s.cfg.JM,
+		"addr":            s.cfg.Addr,
+		"data_dir":        s.cfg.DataDir,
+		"concurrency":     s.cfg.Concurrency,
+		"chapter_jobs":    s.cfg.ChapterJobs,
+		"image_quality":   s.cfg.ImageQuality,
+		"sync_enabled":    s.cfg.SyncEnabled,
+		"sync_interval":   s.cfg.SyncInterval,
+		"sync_recent_count": s.cfg.SyncRecentCount,
+		"jm":              s.cfg.JM,
 	})
 }
 
 type configUpdate struct {
-	Concurrency  *int             `json:"concurrency,omitempty"`
-	ChapterJobs  *int             `json:"chapter_jobs,omitempty"`
-	ImageQuality *int             `json:"image_quality,omitempty"`
-	SyncEnabled  *bool            `json:"sync_enabled,omitempty"`
-	SyncInterval *int             `json:"sync_interval,omitempty"`
-	JM           *struct {
+	Concurrency     *int  `json:"concurrency,omitempty"`
+	ChapterJobs     *int  `json:"chapter_jobs,omitempty"`
+	ImageQuality    *int  `json:"image_quality,omitempty"`
+	SyncEnabled     *bool `json:"sync_enabled,omitempty"`
+	SyncInterval    *int  `json:"sync_interval,omitempty"`
+	SyncRecentCount *int  `json:"sync_recent_count,omitempty"`
+	JM              *struct {
 		Username string `json:"username,omitempty"`
 		Password string `json:"password,omitempty"`
 		Impl     string `json:"impl,omitempty"`
@@ -307,6 +309,9 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	if u.SyncInterval != nil {
 		s.cfg.SyncInterval = *u.SyncInterval
 	}
+	if u.SyncRecentCount != nil {
+		s.cfg.SyncRecentCount = *u.SyncRecentCount
+	}
 	if u.JM != nil {
 		if u.JM.Username != "" {
 			s.cfg.JM.Username = u.JM.Username
@@ -320,11 +325,11 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 热更新同步轮询（无需重启进程）
-	if s.syncSvc != nil && (u.SyncEnabled != nil || u.SyncInterval != nil) {
+	if s.syncSvc != nil && (u.SyncEnabled != nil || u.SyncInterval != nil || u.SyncRecentCount != nil) {
 		enabled := s.cfg.SyncEnabled && s.cfg.SyncInterval > 0
 		interval := time.Duration(s.cfg.SyncInterval) * time.Second
-		if s.syncSvc.UpdateConfig(r.Context(), enabled, interval) {
-			s.logger.Infof("config", "同步配置已热更新：enabled=%v interval=%ds", enabled, s.cfg.SyncInterval)
+		if s.syncSvc.UpdateConfig(r.Context(), enabled, interval, s.cfg.SyncRecentCount) {
+			s.logger.Infof("config", "同步配置已热更新：enabled=%v interval=%ds recent=%d", enabled, s.cfg.SyncInterval, s.cfg.SyncRecentCount)
 		}
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
